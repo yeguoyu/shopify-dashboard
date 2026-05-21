@@ -55,9 +55,9 @@
       </div>
       <div class="kpi-body">
         <span class="kpi-label">今日销售额</span>
-        <span class="kpi-value" id="kpiRevenue">¥128,460</span>
+        <span class="kpi-value" id="kpiRevenue">—</span>
         <div class="kpi-footer">
-          <span class="kpi-tag up">↑ 12.3%</span>
+          <span id="kpiRevenueChange"></span>
           <span class="kpi-vs">vs 昨日</span>
         </div>
       </div>
@@ -70,9 +70,9 @@
       </div>
       <div class="kpi-body">
         <span class="kpi-label">订单数</span>
-        <span class="kpi-value" id="kpiOrders">347</span>
+        <span class="kpi-value" id="kpiOrders">—</span>
         <div class="kpi-footer">
-          <span class="kpi-tag up">↑ 8.1%</span>
+          <span id="kpiOrdersChange"></span>
           <span class="kpi-vs">vs 昨日</span>
         </div>
       </div>
@@ -85,9 +85,9 @@
       </div>
       <div class="kpi-body">
         <span class="kpi-label">客单价</span>
-        <span class="kpi-value" id="kpiAOV">¥370</span>
+        <span class="kpi-value" id="kpiAOV">—</span>
         <div class="kpi-footer">
-          <span class="kpi-tag down">↓ 2.4%</span>
+          <span id="kpiAOVChange"></span>
           <span class="kpi-vs">vs 昨日</span>
         </div>
       </div>
@@ -100,9 +100,9 @@
       </div>
       <div class="kpi-body">
         <span class="kpi-label">转化率</span>
-        <span class="kpi-value" id="kpiCVR">3.82%</span>
+        <span class="kpi-value" id="kpiCVR">—</span>
         <div class="kpi-footer">
-          <span class="kpi-tag up">↑ 0.31pp</span>
+          <span id="kpiCVRChange"></span>
           <span class="kpi-vs">vs 昨日</span>
         </div>
       </div>
@@ -129,8 +129,8 @@
         <canvas id="salesChart" height="220"></canvas>
       </div>
       <div class="chart-legend-row">
-        <span class="legend-item"><span class="legend-line" style="background:var(--shopify)"></span>今日 ¥128,460</span>
-        <span class="legend-item"><span class="legend-line dashed" style="background:var(--text-muted)"></span>昨日 ¥114,380</span>
+        <span class="legend-item"><span class="legend-line" style="background:var(--shopify)"></span>今日</span>
+        <span class="legend-item"><span class="legend-line dashed" style="background:var(--text-muted)"></span>昨日</span>
       </div>
     </div>
 
@@ -144,64 +144,13 @@
         <span class="badge">同比 ↑</span>
       </div>
       <div class="funnel" id="funnelChart">
-        <div class="funnel-step" style="--step-color: var(--shopify); --bar-h: 100%">
-          <div class="funnel-bar-col">
-            <span class="funnel-pct">100%</span>
-            <div class="funnel-bar"></div>
-          </div>
-          <div class="funnel-info">
-            <span class="funnel-name">浏览</span>
-            <span class="funnel-num">9,082</span>
-          </div>
-        </div>
-        <div class="funnel-arrow">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="funnel-drop">23.6%</span>
-        </div>
-        <div class="funnel-step" style="--step-color: var(--blue); --bar-h: 62%">
-          <div class="funnel-bar-col">
-            <span class="funnel-pct">23.6%</span>
-            <div class="funnel-bar"></div>
-          </div>
-          <div class="funnel-info">
-            <span class="funnel-name">加购</span>
-            <span class="funnel-num">2,143</span>
-          </div>
-        </div>
-        <div class="funnel-arrow">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="funnel-drop">9.2%</span>
-        </div>
-        <div class="funnel-step" style="--step-color: var(--orange); --bar-h: 38%">
-          <div class="funnel-bar-col">
-            <span class="funnel-pct">9.2%</span>
-            <div class="funnel-bar"></div>
-          </div>
-          <div class="funnel-info">
-            <span class="funnel-name">结账</span>
-            <span class="funnel-num">835</span>
-          </div>
-        </div>
-        <div class="funnel-arrow">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="funnel-drop">3.8%</span>
-        </div>
-        <div class="funnel-step" style="--step-color: var(--purple); --bar-h: 22%">
-          <div class="funnel-bar-col">
-            <span class="funnel-pct">3.8%</span>
-            <div class="funnel-bar"></div>
-          </div>
-          <div class="funnel-info">
-            <span class="funnel-name">付款</span>
-            <span class="funnel-num">347</span>
-          </div>
-        </div>
+        <div style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</div>
       </div>
-      <div class="funnel-metrics">
-        <div class="fm"><span class="fm-label">加购率</span><span class="fm-val up">23.6% <small>↑1.2pp</small></span></div>
-        <div class="fm"><span class="fm-label">结账率</span><span class="fm-val up">9.2% <small>↑0.5pp</small></span></div>
-        <div class="fm"><span class="fm-label">付款率</span><span class="fm-val up">3.8% <small>↑0.3pp</small></span></div>
-        <div class="fm"><span class="fm-label">加购→付款</span><span class="fm-val down">16.2% <small>↓0.8pp</small></span></div>
+      <div class="funnel-metrics" id="funnelMetrics">
+        <div class="fm"><span class="fm-label">加购率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
+        <div class="fm"><span class="fm-label">结账率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
+        <div class="fm"><span class="fm-label">付款率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
+        <div class="fm"><span class="fm-label">加购→付款</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
       </div>
     </div>
   </section>
@@ -216,67 +165,8 @@
           <span class="card-subtitle">Sessions · ATC · CVR</span>
         </div>
       </div>
-      <div class="traffic-list">
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#1877f2"></span>Facebook</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:68%;background:linear-gradient(90deg,#1877f2,#64b5f6)" data-v="2,840"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 26%</span>
-            <span class="rate-tag cvr">CVR 4.1%</span>
-          </div>
-        </div>
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#ea4335"></span>Google</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:52%;background:linear-gradient(90deg,#ea4335,#ef9a9a)" data-v="2,180"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 21%</span>
-            <span class="rate-tag cvr">CVR 3.8%</span>
-          </div>
-        </div>
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#ff004f"></span>TikTok</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:38%;background:linear-gradient(90deg,#ff004f,#ff80ab)" data-v="1,590"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 28%</span>
-            <span class="rate-tag cvr">CVR 2.9%</span>
-          </div>
-        </div>
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#96bf48"></span>Email</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:24%;background:linear-gradient(90deg,#96bf48,#c5e17a)" data-v="1,020"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 19%</span>
-            <span class="rate-tag cvr">CVR 5.6%</span>
-          </div>
-        </div>
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#60a5fa"></span>Organic</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:18%;background:linear-gradient(90deg,#60a5fa,#bbdefb)" data-v="780"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 18%</span>
-            <span class="rate-tag cvr">CVR 4.5%</span>
-          </div>
-        </div>
-        <div class="traffic-item">
-          <div class="traffic-source"><span class="source-dot" style="background:#8b8da3"></span>Direct</div>
-          <div class="traffic-bar-wrap">
-            <div class="traffic-fill" style="width:14%;background:linear-gradient(90deg,#8b8da3,#bdbdbd)" data-v="672"></div>
-          </div>
-          <div class="traffic-rates">
-            <span class="rate-tag atc">ATC 15%</span>
-            <span class="rate-tag cvr">CVR 3.2%</span>
-          </div>
-        </div>
+      <div class="traffic-list" id="trafficList">
+        <div style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</div>
       </div>
     </div>
 
@@ -289,32 +179,12 @@
         </div>
         <span class="badge">多触点</span>
       </div>
-      <div class="attr-cards">
-        <div class="attr-item" style="--ac:var(--shopify)">
-          <div class="attr-model">FIRST TOUCH</div>
-          <div class="attr-channel">Facebook Ads</div>
-          <div class="attr-bar-bg"><div class="attr-bar" style="width:68%;background:var(--shopify)"></div></div>
-          <div class="attr-meta">¥42,800 <span class="attr-pct">33.3%</span></div>
-        </div>
-        <div class="attr-item" style="--ac:var(--blue)">
-          <div class="attr-model">LAST TOUCH</div>
-          <div class="attr-channel">Google Ads</div>
-          <div class="attr-bar-bg"><div class="attr-bar" style="width:58%;background:var(--blue)"></div></div>
-          <div class="attr-meta">¥38,200 <span class="attr-pct">29.7%</span></div>
-        </div>
-        <div class="attr-item" style="--ac:var(--orange)">
-          <div class="attr-model">LINEAR</div>
-          <div class="attr-channel">TikTok Ads</div>
-          <div class="attr-bar-bg"><div class="attr-bar" style="width:44%;background:var(--orange)"></div></div>
-          <div class="attr-meta">¥28,600 <span class="attr-pct">22.3%</span></div>
-        </div>
+      <div class="attr-cards" id="attrCards">
+        <div style="text-align:center;color:var(--text-muted);padding:30px;font-size:13px">加载中...</div>
       </div>
-      <div class="attr-insight">
+      <div class="attr-insight" id="attrInsight">
         <div class="insight-icon">💡</div>
-        <div class="insight-text">
-          <strong>归因判断</strong><br>
-          Facebook 拉新表现最强（First Touch 33.3%），Google 在最终转化上效率更高（Last Touch 29.7%）。TikTok 在中间触点作用显著，建议维持品牌曝光预算，同时关注 TikTok 的加购率下滑趋势（同比 ↓11.3%）。
-        </div>
+        <div class="insight-text"><strong>归因判断</strong><br>数据加载中...</div>
       </div>
     </div>
   </section>
@@ -346,109 +216,8 @@
               <th>同比</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#1877f215;color:#1877f2">f</span>
-                  <div>
-                    <span class="ch-name">fb_summer_sale_2026</span>
-                    <span class="ch-platform">Facebook Ads</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥42,800</td>
-              <td class="num-cell">116</td>
-              <td class="num-cell">2,840</td>
-              <td class="num-cell">26.1%</td>
-              <td class="num-cell">4.1%</td>
-              <td><span class="delta up">↑ 18.2%</span></td>
-            </tr>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#ea433515;color:#ea4335">G</span>
-                  <div>
-                    <span class="ch-name">gads_brand_may</span>
-                    <span class="ch-platform">Google Ads</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥38,200</td>
-              <td class="num-cell">98</td>
-              <td class="num-cell">2,180</td>
-              <td class="num-cell">21.3%</td>
-              <td class="num-cell">3.8%</td>
-              <td><span class="delta up">↑ 5.7%</span></td>
-            </tr>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#ff004f15;color:#ff004f">T</span>
-                  <div>
-                    <span class="ch-name">tt_influencer_may</span>
-                    <span class="ch-platform">TikTok Ads</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥22,150</td>
-              <td class="num-cell">63</td>
-              <td class="num-cell">1,590</td>
-              <td class="num-cell">28.4%</td>
-              <td class="num-cell">2.9%</td>
-              <td><span class="delta down">↓ 11.3%</span></td>
-            </tr>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#96bf4815;color:#96bf48">✉</span>
-                  <div>
-                    <span class="ch-name">klaviyo_flash_may20</span>
-                    <span class="ch-platform">Omnisend Email</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥15,680</td>
-              <td class="num-cell">42</td>
-              <td class="num-cell">1,020</td>
-              <td class="num-cell">19.0%</td>
-              <td class="num-cell">5.6%</td>
-              <td><span class="delta up">↑ 32.1%</span></td>
-            </tr>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#60a5fa15;color:#60a5fa">🔍</span>
-                  <div>
-                    <span class="ch-name">organic_search</span>
-                    <span class="ch-platform">SEO / Organic</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥6,420</td>
-              <td class="num-cell">18</td>
-              <td class="num-cell">780</td>
-              <td class="num-cell">18.2%</td>
-              <td class="num-cell">4.5%</td>
-              <td><span class="delta up">↑ 2.1%</span></td>
-            </tr>
-            <tr>
-              <td>
-                <div class="ch-cell">
-                  <span class="ch-icon" style="background:#8b8da315;color:#8b8da3">→</span>
-                  <div>
-                    <span class="ch-name">direct / none</span>
-                    <span class="ch-platform">Direct Traffic</span>
-                  </div>
-                </div>
-              </td>
-              <td class="num-cell">¥3,210</td>
-              <td class="num-cell">10</td>
-              <td class="num-cell">672</td>
-              <td class="num-cell">15.0%</td>
-              <td class="num-cell">3.2%</td>
-              <td><span class="delta down">↓ 6.4%</span></td>
-            </tr>
+          <tbody id="campaignTableBody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</td></tr>
           </tbody>
         </table>
       </div>
