@@ -5,7 +5,7 @@
 // ---- Config ----
 const CONFIG = {
   // TODO: Replace with your Cloudflare Worker API URL
-  API_BASE: '',
+  API_BASE: 'https://thermal-master-api.thermalmaster.workers.dev',
   // TODO: Replace with your Feishu webhook
   FEISHU_WEBHOOK: '',
   REFRESH_INTERVAL: 60000, // 1 min
@@ -201,7 +201,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ---- Data Layer (for future API integration) ----
-/*
+
   When ready to connect real data, implement these functions:
 
   async function fetchDashboardData() {
@@ -232,4 +232,4 @@ window.addEventListener('DOMContentLoaded', () => {
     updateKPIs(data);
     renderSalesChart();
   }, CONFIG.REFRESH_INTERVAL);
-*/
+
