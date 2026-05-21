@@ -6,7 +6,7 @@
 const CONFIG = {
   API_BASE: 'https://thermal-master-api.thermalmaster.workers.dev',
   REFRESH_INTERVAL: 60000,
-  CURRENCY: '¥',
+  CURRENCY: '$',
 };
 
 // ---- Channel color map ----
