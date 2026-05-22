@@ -458,9 +458,11 @@ function loadAllData() {
         renderTraffic(channels.channels);
         renderTable(channels.channels);
       }
-      if (channels.attribution) {
-        renderAttributionData(channels.attribution);
-      }
+      // Always render attribution (even empty) to clear "加载中..."
+      renderAttributionData(channels.attribution || { first_touch: [], last_touch: [] });
+    } else {
+      // API failed entirely — still clear loading
+      renderAttributionData({ first_touch: [], last_touch: [] });
     }
 
     // Update sync time
