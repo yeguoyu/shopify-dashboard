@@ -7,19 +7,274 @@
 <meta name="description" content="Shopify Analytics Dashboard for Thermal Master">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2396bf48'/><text x='16' y='22' text-anchor='middle' fill='white' font-size='18' font-family='sans-serif'>T</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<style>
+/* ============================================
+   CSS Variables — Dark / Warm Themes
+   ============================================ */
+:root {
+  --font-display: 'Outfit', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #141414;
+  --bg-card: #1a1a1a;
+  --bg-card-hover: #222;
+  --border: #2a2a2a;
+  --text-primary: #f0f0f0;
+  --text-secondary: #999;
+  --text-tertiary: #555;
+  --accent: #96bf48;
+  --accent-bg: rgba(150,191,72,0.12);
+  --red: #ef4444;
+  --red-bg: rgba(239,68,68,0.12);
+  --orange: #f59e0b;
+  --orange-bg: rgba(245,158,11,0.12);
+  --blue: #3b82f6;
+  --blue-bg: rgba(59,130,246,0.12);
+  --purple: #8b5cf6;
+}
+
+[data-theme="warm"] {
+  --bg-primary: #faf7f2;
+  --bg-secondary: #f3efe8;
+  --bg-card: #ffffff;
+  --bg-card-hover: #faf7f2;
+  --border: #e8e0d4;
+  --text-primary: #2d2418;
+  --text-secondary: #8a7e6f;
+  --text-tertiary: #bdb2a2;
+  --accent: #7a9a3a;
+  --accent-bg: rgba(122,154,58,0.10);
+  --red: #c0392b;
+  --red-bg: rgba(192,57,43,0.08);
+  --orange: #d4780a;
+  --orange-bg: rgba(212,120,10,0.08);
+  --blue: #2e6bc4;
+  --blue-bg: rgba(46,107,196,0.08);
+  --purple: #7c3aed;
+}
+
+/* ============================================
+   Base
+   ============================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-display);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+/* ============================================
+   Header
+   ============================================ */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  position: sticky; top: 0; z-index: 100;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--accent); display: flex; align-items: center; justify-content: center;
+  color: #fff;
+}
+.header-title { font-size: 16px; font-weight: 700; }
+.header-sub { font-size: 11px; color: var(--text-secondary); letter-spacing: 1px; text-transform: uppercase; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+
+.live-indicator { display: flex; align-items: center; gap: 6px; }
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.live-text { font-size: 11px; color: var(--accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.date-display { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+
+.theme-switch { display: flex; background: var(--bg-primary); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.theme-btn {
+  font-size: 11px; padding: 5px 12px; border: none; background: transparent;
+  color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; gap: 4px;
+  font-family: var(--font-display); transition: all 0.2s;
+}
+.theme-btn.active { background: var(--accent); color: #fff; }
+
+.sync-info { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+.refresh-btn {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-secondary); cursor: pointer; padding: 5px 10px; font-size: 12px;
+  display: flex; align-items: center; gap: 4px; font-family: var(--font-display);
+}
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ============================================
+   KPI Cards
+   ============================================ */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 20px 0;
+}
+.kpi-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 18px;
+  transition: border-color 0.2s;
+}
+.kpi-card:hover { border-color: var(--accent); }
+.kpi-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+.kpi-value { font-size: 26px; font-weight: 700; font-family: var(--font-mono); line-height: 1.2; }
+.kpi-delta { font-size: 11px; font-weight: 600; margin-top: 4px; display: inline-block; }
+.kpi-delta.up { color: var(--accent); }
+.kpi-delta.up::before { content: '▲ '; font-size: 8px; }
+.kpi-delta.down { color: var(--red); }
+.kpi-delta.down::before { content: '▼ '; font-size: 8px; }
+.kpi-sub { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+
+/* Color-coded KPI values */
+.kpi-value.good { color: var(--accent); }
+.kpi-value.warn { color: var(--orange); }
+.kpi-value.bad { color: var(--red); }
+
+/* ============================================
+   Section Panels
+   ============================================ */
+.section { margin-bottom: 24px; }
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.section-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+
+.panel {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px; overflow: hidden;
+}
+
+/* ============================================
+   Chart Area
+   ============================================ */
+.chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.chart-legend { display: flex; gap: 16px; }
+.chart-legend span { font-size: 12px; color: var(--text-secondary); }
+.chart-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.chart-legend .dot-today { background: var(--accent); }
+.chart-legend .dot-yday { background: var(--text-tertiary); }
+
+.chip-group { display: flex; gap: 4px; }
+.chip {
+  font-size: 10px; padding: 3px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-family: var(--font-display);
+}
+.chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ============================================
+   Funnel
+   ============================================ */
+.funnel-step { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.funnel-label { min-width: 90px; font-size: 12px; color: var(--text-secondary); text-align: right; }
+.funnel-bar-wrap { flex: 1; height: 24px; background: var(--bg-secondary); border-radius: 6px; overflow: hidden; }
+.funnel-bar { height: 100%; background: var(--accent); border-radius: 6px; transition: width 0.6s ease; min-width: 2%; }
+.funnel-stats { display: flex; gap: 8px; min-width: 130px; font-size: 12px; }
+.funnel-count { font-weight: 600; font-family: var(--font-mono); }
+.funnel-pct { color: var(--text-secondary); }
+
+/* ============================================
+   Traffic / Channel Visualization
+   ============================================ */
+.traffic-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.traffic-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.traffic-name { min-width: 100px; font-size: 12px; }
+.traffic-bar-wrap { flex: 1; height: 16px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
+.traffic-bar { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+.traffic-pct { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); min-width: 45px; text-align: right; }
+
+/* ============================================
+   Channel Table (with ROAS/CPA cols)
+   ============================================ */
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  text-align: left; padding: 8px 12px; font-weight: 600;
+  color: var(--text-secondary); border-bottom: 1px solid var(--border);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); white-space: nowrap;
+}
+.data-table tr:hover { background: var(--bg-card-hover); }
+.data-table td.good { color: var(--accent); font-weight: 600; }
+.data-table td.warn { color: var(--orange); font-weight: 600; }
+.data-table td.bad { color: var(--red); font-weight: 600; }
+
+/* ============================================
+   Attribution Tabs
+   ============================================ */
+.attr-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.attr-tab-btn {
+  font-size: 11px; padding: 5px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-family: var(--font-display);
+}
+.attr-tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.attr-tab-panel { display: none; }
+.attr-tab-panel:first-of-type { display: block; }
+
+/* ============================================
+   Channel Spend Mini List (in KPI area)
+   ============================================ */
+.spend-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; }
+.spend-channel { color: var(--text-secondary); }
+.spend-amount { font-family: var(--font-mono); font-weight: 600; }
+
+/* ============================================
+   Two-Column Layout
+   ============================================ */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 768px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ============================================
+   Loading
+   ============================================ */
+.loading-placeholder {
+  height: 60px; background: var(--bg-secondary); border-radius: 8px;
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  0% { opacity: 0.5; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.5; }
+}
+</style>
 </head>
 <body data-theme="dark">
 
-<!-- Header -->
+<!-- ============================================
+     Header
+     ============================================ -->
 <header class="header">
   <div class="header-left">
     <div class="logo">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
     </div>
-    <div class="header-brand">
-      <h1 class="header-title">Thermal Master</h1>
-      <span class="header-sub">Analytics Dashboard</span>
+    <div>
+      <div class="header-title">Thermal Master</div>
+      <div class="header-sub">Analytics Dashboard</div>
     </div>
   </div>
   <div class="header-right">
@@ -30,206 +285,193 @@
     <div class="date-display" id="dateDisplay"></div>
     <div class="theme-switch">
       <button class="theme-btn active" data-t="dark" onclick="setTheme('dark')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         暗色
       </button>
       <button class="theme-btn" data-t="warm" onclick="setTheme('warm')">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/></svg>
         暖色
       </button>
     </div>
-    <button class="sync-btn" id="syncBtn" onclick="syncFeishu()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
-      推送飞书
+    <span class="sync-info">同步 <span id="lastSync">--:--</span></span>
+    <button class="refresh-btn" onclick="refreshDashboard()">
+      <svg class="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      刷新
     </button>
   </div>
 </header>
 
-<main class="main">
+<div class="container">
 
-  <!-- KPI Cards -->
-  <section class="kpi-grid">
-    <div class="kpi" style="--delay:0.05s; --accent-c: var(--shopify)">
-      <div class="kpi-icon-wrap" style="background: var(--shopify-bg)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--shopify)" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-      </div>
-      <div class="kpi-body">
-        <span class="kpi-label">今日销售额</span>
-        <span class="kpi-value" id="kpiRevenue">—</span>
-        <div class="kpi-footer">
-          <span id="kpiRevenueChange"></span>
-          <span class="kpi-vs">vs 昨日</span>
-        </div>
-      </div>
-      <div class="kpi-spark" id="sparkRevenue"></div>
+  <!-- ============================================
+       KPI Cards — Row 1: Core Metrics
+       ============================================ -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">💰 今日销售额</div>
+      <div class="kpi-value" id="kpiRevenue">$0</div>
+      <div class="kpi-delta" id="kpiRevenueDelta">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">📦 订单数</div>
+      <div class="kpi-value" id="kpiOrders">0</div>
+      <div class="kpi-delta" id="kpiOrdersDelta">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">👤 Sessions</div>
+      <div class="kpi-value" id="kpiSessions">0</div>
+      <div class="kpi-delta" id="kpiSessionsDelta">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">📈 转化率</div>
+      <div class="kpi-value" id="kpiCR">0%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">🛒 AOV</div>
+      <div class="kpi-value" id="kpiAOV">$0</div>
+      <div class="kpi-delta" id="kpiAOVDelta">—</div>
     </div>
 
-    <div class="kpi" style="--delay:0.1s; --accent-c: var(--blue)">
-      <div class="kpi-icon-wrap" style="background: var(--blue-bg)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-      </div>
-      <div class="kpi-body">
-        <span class="kpi-label">订单数</span>
-        <span class="kpi-value" id="kpiOrders">—</span>
-        <div class="kpi-footer">
-          <span id="kpiOrdersChange"></span>
-          <span class="kpi-vs">vs 昨日</span>
-        </div>
-      </div>
-      <div class="kpi-spark" id="sparkOrders"></div>
+    <!-- New: Ad Spend -->
+    <div class="kpi-card">
+      <div class="kpi-label">💵 今日广告花费</div>
+      <div class="kpi-value" id="kpiAdSpend">$0</div>
+      <div id="channelSpendList" style="margin-top: 8px;"></div>
     </div>
 
-    <div class="kpi" style="--delay:0.15s; --accent-c: var(--orange)">
-      <div class="kpi-icon-wrap" style="background: var(--orange-bg)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="2"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-      </div>
-      <div class="kpi-body">
-        <span class="kpi-label">客单价</span>
-        <span class="kpi-value" id="kpiAOV">—</span>
-        <div class="kpi-footer">
-          <span id="kpiAOVChange"></span>
-          <span class="kpi-vs">vs 昨日</span>
-        </div>
-      </div>
-      <div class="kpi-spark" id="sparkAOV"></div>
+    <!-- New: ROAS -->
+    <div class="kpi-card">
+      <div class="kpi-label">📊 ROAS</div>
+      <div class="kpi-value" id="kpiROAS">—</div>
+      <div class="kpi-sub">Revenue / Ad Spend</div>
     </div>
 
-    <div class="kpi" style="--delay:0.2s; --accent-c: var(--purple)">
-      <div class="kpi-icon-wrap" style="background: var(--purple-bg)">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      </div>
-      <div class="kpi-body">
-        <span class="kpi-label">转化率</span>
-        <span class="kpi-value" id="kpiCVR">—</span>
-        <div class="kpi-footer">
-          <span id="kpiCVRChange"></span>
-          <span class="kpi-vs">vs 昨日</span>
-        </div>
-      </div>
-      <div class="kpi-spark" id="sparkCVR"></div>
+    <!-- New: Refund Rate -->
+    <div class="kpi-card">
+      <div class="kpi-label">↩️ 退货率 (30天)</div>
+      <div class="kpi-value" id="kpiRefundRate">0%</div>
+      <div class="kpi-sub" id="kpiRefundCount">0 笔 / $0</div>
     </div>
-  </section>
+  </div>
 
-  <!-- Row: Sales Trend + Funnel -->
-  <section class="grid-2">
-    <!-- Sales Trend Chart -->
-    <div class="card" style="--delay:0.25s">
-      <div class="card-head">
-        <div class="card-title-group">
-          <h2 class="card-title">销售趋势</h2>
-          <span class="card-subtitle">按小时 · 今日 vs 昨日</span>
+  <!-- ============================================
+       Sales Chart
+       ============================================ -->
+  <div class="section">
+    <div class="panel">
+      <div class="chart-header">
+        <div class="chart-legend">
+          <span><span class="dot dot-today"></span><span id="legendToday">今天 $0</span></span>
+          <span><span class="dot dot-yday"></span><span id="legendYday">昨天 $0</span></span>
         </div>
-        <div class="card-actions">
-          <button class="chip active" onclick="setChartRange(this,'today')">今日</button>
-          <button class="chip" onclick="setChartRange(this,'7d')">7日</button>
-          <button class="chip" onclick="setChartRange(this,'30d')">30日</button>
+        <div class="chip-group">
+          <button class="chip active" onclick="setChartRange(this,'24h')">24h</button>
+          <button class="chip" onclick="setChartRange(this,'7d')">7d</button>
+          <button class="chip" onclick="setChartRange(this,'30d')">30d</button>
         </div>
       </div>
-      <div class="chart-wrap">
-        <canvas id="salesChart" height="220"></canvas>
-      </div>
-      <div class="chart-legend-row">
-        <span class="legend-item"><span class="legend-line" style="background:var(--shopify)"></span>今日</span>
-        <span class="legend-item"><span class="legend-line dashed" style="background:var(--text-muted)"></span>昨日</span>
-      </div>
+      <canvas id="salesChart"></canvas>
     </div>
+  </div>
 
+  <!-- ============================================
+       Funnel + Traffic (side by side)
+       ============================================ -->
+  <div class="grid-2">
     <!-- Funnel -->
-    <div class="card" style="--delay:0.3s">
-      <div class="card-head">
-        <div class="card-title-group">
-          <h2 class="card-title">转化漏斗</h2>
-          <span class="card-subtitle">加购 → 结账 → 付款</span>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">🔻 转化漏斗</div>
+      </div>
+      <div class="panel">
+        <div id="funnelBars">
+          <div class="loading-placeholder"></div>
         </div>
-        <span class="badge">同比 ↑</span>
-      </div>
-      <div class="funnel" id="funnelChart">
-        <div style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</div>
-      </div>
-      <div class="funnel-metrics" id="funnelMetrics">
-        <div class="fm"><span class="fm-label">加购率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
-        <div class="fm"><span class="fm-label">结账率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
-        <div class="fm"><span class="fm-label">付款率</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
-        <div class="fm"><span class="fm-label">加购→付款</span><span class="fm-val" style="color:var(--text-muted)">—</span></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Row: Channel Traffic + Attribution -->
-  <section class="grid-2">
-    <!-- Channel Traffic -->
-    <div class="card" style="--delay:0.35s">
-      <div class="card-head">
-        <div class="card-title-group">
-          <h2 class="card-title">渠道流量 & 转化</h2>
-          <span class="card-subtitle">Sessions · ATC · CVR</span>
-        </div>
-      </div>
-      <div class="traffic-list" id="trafficList">
-        <div style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</div>
       </div>
     </div>
 
-    <!-- Attribution -->
-    <div class="card" style="--delay:0.4s">
-      <div class="card-head">
-        <div class="card-title-group">
-          <h2 class="card-title">归因分析</h2>
-          <span class="card-subtitle">First / Last / Linear Touch</span>
+    <!-- Traffic Sources -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">📡 流量来源</div>
+      </div>
+      <div class="panel">
+        <div id="trafficDonut">
+          <div class="loading-placeholder"></div>
         </div>
-        <span class="badge">多触点</span>
-      </div>
-      <div class="attr-cards" id="attrCards">
-        <div style="text-align:center;color:var(--text-muted);padding:30px;font-size:13px">加载中...</div>
-      </div>
-      <div class="attr-insight" id="attrInsight">
-        <div class="insight-icon">💡</div>
-        <div class="insight-text"><strong>归因判断</strong><br>数据加载中...</div>
       </div>
     </div>
-  </section>
+  </div>
 
-  <!-- Campaign Table -->
-  <section class="grid-full" style="--delay:0.45s">
-    <div class="card">
-      <div class="card-head">
-        <div class="card-title-group">
-          <h2 class="card-title">营销渠道明细</h2>
-          <span class="card-subtitle">UTM Campaign · 同比变化</span>
-        </div>
-        <div class="card-actions">
-          <button class="chip active">全部</button>
-          <button class="chip">上涨</button>
-          <button class="chip">下滑</button>
-        </div>
-      </div>
-      <div class="table-wrap">
+  <!-- ============================================
+       Channel Performance Table (with ROAS / CPA)
+       ============================================ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">📋 渠道业绩明细</div>
+    </div>
+    <div class="panel">
+      <div class="table-scroll">
         <table class="data-table">
           <thead>
             <tr>
-              <th>渠道 / Campaign</th>
-              <th>销售额</th>
-              <th>订单</th>
+              <th>渠道</th>
               <th>Sessions</th>
-              <th>加购率</th>
-              <th>CVR</th>
-              <th>同比</th>
+              <th>订单</th>
+              <th>销售额</th>
+              <th>AOV</th>
+              <th>转化率</th>
+              <th>花费</th>
+              <th>ROAS</th>
+              <th>CPA</th>
             </tr>
           </thead>
-          <tbody id="campaignTableBody">
-            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;font-size:13px">加载中...</td></tr>
+          <tbody id="channelTableBody">
+            <tr><td colspan="9"><div class="loading-placeholder"></div></td></tr>
           </tbody>
         </table>
       </div>
     </div>
-  </section>
+  </div>
 
-</main>
+  <!-- ============================================
+       Attribution Analysis (First / Last Touch)
+       ============================================ -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">🎯 归因分析</div>
+    </div>
+    <div class="panel">
+      <div class="attr-tabs">
+        <button class="attr-tab-btn active" onclick="switchAttrTab(this,'first')">首次触达 (First Touch)</button>
+        <button class="attr-tab-btn" onclick="switchAttrTab(this,'last')">末次触达 (Last Touch)</button>
+      </div>
 
-<footer class="footer">
-  <span>Thermal Master Analytics · Powered by Shopify API</span>
-  <span>Last synced: <span id="lastSync"></span></span>
-</footer>
+      <div id="attrPanel_first" class="attr-tab-panel" style="display:block;">
+        <table class="data-table">
+          <thead>
+            <tr><th>渠道</th><th>订单数</th><th>销售额</th><th>占比</th></tr>
+          </thead>
+          <tbody id="firstTouchBody">
+            <tr><td colspan="4" style="text-align:center;opacity:0.5">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="attrPanel_last" class="attr-tab-panel">
+        <table class="data-table">
+          <thead>
+            <tr><th>渠道</th><th>订单数</th><th>销售额</th><th>占比</th></tr>
+          </thead>
+          <tbody id="lastTouchBody">
+            <tr><td colspan="4" style="text-align:center;opacity:0.5">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.container -->
 
 <script src="app.js"></script>
 </body>
