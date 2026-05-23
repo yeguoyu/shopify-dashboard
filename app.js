@@ -1,14 +1,15 @@
 // ============================================
-// Thermal Master Dashboard — app.js v2
-// + ROI / ROAS 卡片
-// + 退货率指标
-// + 归因数据（first/last touch）
+// Thermal Master Dashboard — app.js v3
+// + Last Non-Click Top 10 渠道
+// + AI 数据分析总结
+// + ROI / ROAS / 退货率指标
 // ============================================
 
 var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 
 var _currentRange = 'today';
 var _chartData = { today: new Array(24).fill(0), yesterday: new Array(24).fill(0), labels: [], mode: 'hourly' };
+var _analysisSummary = null;
 
 // ============================================
 // API Fetchers
@@ -57,6 +58,37 @@ function fmtNum(n) {
 function fmtPct(n) {
   if (n == null) return '0%';
   return parseFloat(n).toFixed(2) + '%';
+}
+
+function fmtSignedMoney(n) {
+  var val = Number(n || 0);
+  var sign = val > 0 ? '+' : val < 0 ? '-' : '';
+  return sign + fmtMoney(Math.abs(val));
+}
+
+function fmtSignedPct(n) {
+  if (n == null || !isFinite(Number(n))) return '—';
+  var val = Number(n);
+  var sign = val > 0 ? '+' : val < 0 ? '' : '';
+  return sign + val.toFixed(1) + '%';
+}
+
+function fmtChangeCell(row) {
+  var delta = Number(row && row.revenue_change != null ? row.revenue_change : 0);
+  var pct = row && row.revenue_change_pct != null ? row.revenue_change_pct : null;
+
+  if (!delta) return '—';
+
+  return fmtSignedMoney(delta) + (pct == null ? '' : ' / ' + fmtSignedPct(pct));
+}
+
+function changeClass(row) {
+  var delta = Number(row && row.revenue_change != null ? row.revenue_change : 0);
+
+  if (delta > 0) return 'delta-up';
+  if (delta < 0) return 'delta-down';
+
+  return 'delta-flat';
 }
 
 function calcDelta(current, previous) {
@@ -344,38 +376,7 @@ function renderFunnel(data) {
 // ============================================
 
 function getTrafficDisplayChannels(channels) {
-  var visible = [];
-
-  var merged = {
-    channel: 'Other',
-    sessions: 0,
-    orders: 0,
-    revenue: 0,
-    spend: 0
-  };
-
-  (channels || []).forEach(function (c) {
-    var sessions = c.sessions || 0;
-    var hasBusinessValue = (c.orders || 0) > 0 || (c.revenue || 0) > 0 || (c.spend || 0) > 0;
-    var isCore = sessions >= 5 || hasBusinessValue;
-
-    if (isCore) {
-      visible.push(c);
-    } else {
-      merged.sessions += sessions;
-      merged.orders += c.orders || 0;
-      merged.revenue += c.revenue || 0;
-      merged.spend += c.spend || 0;
-    }
-  });
-
-  if (merged.sessions > 0 || merged.orders > 0 || merged.revenue > 0 || merged.spend > 0) {
-    visible.push(merged);
-  }
-
-  return visible.sort(function (a, b) {
-    return (b.sessions || 0) - (a.sessions || 0);
-  });
+  return (channels || []).slice(0, 10);
 }
 
 function renderTraffic(channels) {
@@ -426,16 +427,24 @@ function renderTable(channels) {
   var tbody = document.getElementById('channelTableBody');
   if (!tbody) return;
 
+  var rows = (channels || []).slice(0, 10);
   var html = '';
 
-  channels.forEach(function (c) {
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;opacity:0.5">暂无渠道数据</td></tr>';
+    return;
+  }
+
+  rows.forEach(function (c) {
     var cr = c.sessions > 0 ? ((c.orders / c.sessions) * 100).toFixed(2) : '0';
+    var insight = findTrendInsight(c.channel);
 
     html += '<tr>' +
       '<td>' + escHtml(c.channel || 'Direct') + '</td>' +
       '<td>' + fmtNum(c.sessions) + '</td>' +
       '<td>' + fmtNum(c.orders) + '</td>' +
       '<td>' + fmtMoney(c.revenue) + '</td>' +
+      '<td class="' + changeClass(c) + '">' + escHtml(fmtChangeCell(c)) + '</td>' +
       '<td>' + fmtMoney(c.aov) + '</td>' +
       '<td>' + cr + '%</td>' +
       '<td>' + fmtMoney(c.spend) + '</td>' +
@@ -443,11 +452,13 @@ function renderTable(channels) {
       (c.roas != null ? c.roas + 'x' : '—') +
       '</td>' +
       '<td>' + (c.cpa != null ? fmtMoney(c.cpa) : '—') + '</td>' +
+      '<td style="white-space:normal;min-width:220px;">' + escHtml(insight ? insight.reason : '—') + '</td>' +
       '</tr>';
   });
 
   tbody.innerHTML = html;
 }
+
 
 // ============================================
 // Attribution
@@ -487,6 +498,107 @@ function renderAttributionTable(tbodyId, data) {
 }
 
 // ============================================
+// AI Analysis Rendering
+// ============================================
+
+function renderAIAnalysis(analysis) {
+  var summary = analysis && analysis.ai_summary ? analysis.ai_summary : analysis;
+
+  _analysisSummary = summary || null;
+
+  var summaryEl = document.getElementById('aiSummaryText');
+  var modelEl = document.getElementById('analysisModel');
+
+  if (!summary) {
+    if (summaryEl) summaryEl.textContent = '暂无 AI 分析数据。请确认 Worker 已部署 /api/ai-analysis 或 /api/dashboard analysis 字段。';
+    renderTrendList('aiRisingList', [], 'up');
+    renderTrendList('aiFallingList', [], 'down');
+    renderActionList([]);
+    return;
+  }
+
+  if (summaryEl) {
+    summaryEl.textContent = summary.summary || '暂无明显上涨或下降趋势。';
+  }
+
+  if (modelEl) {
+    var modelText = summary.attribution_model || 'last_non_click';
+    modelEl.textContent = modelText.replace(/_/g, ' ') + ' · Top 10';
+  }
+
+  renderTrendList('aiRisingList', summary.rising_channels || [], 'up');
+  renderTrendList('aiFallingList', summary.falling_channels || [], 'down');
+  renderActionList(summary.actions || []);
+}
+
+function renderTrendList(containerId, rows, type) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+
+  var list = (rows || []).slice(0, 5);
+
+  if (!list.length) {
+    container.innerHTML = '<div class="analysis-empty">暂无明显' + (type === 'up' ? '上涨' : '下降') + '渠道</div>';
+    return;
+  }
+
+  var html = '';
+
+  list.forEach(function (row) {
+    html += '<div class="analysis-item ' + (type === 'up' ? 'up' : 'down') + '">' +
+      '<div class="analysis-item-head">' +
+      '<span class="analysis-channel">' + escHtml(row.channel || 'Unknown') + '</span>' +
+      '<span class="analysis-change ' + (type === 'up' ? 'up' : 'down') + '">' +
+      escHtml(fmtSignedMoney(row.revenue_change || 0)) +
+      (row.revenue_change_pct == null ? '' : ' / ' + escHtml(fmtSignedPct(row.revenue_change_pct))) +
+      '</span>' +
+      '</div>' +
+      '<div class="analysis-detail">当前 ' + escHtml(fmtMoney(row.revenue)) +
+      '，上期 ' + escHtml(fmtMoney(row.previous_revenue)) +
+      '；订单 ' + escHtml(fmtNum(row.orders)) +
+      '，上期 ' + escHtml(fmtNum(row.previous_orders)) + '。</div>' +
+      '<div class="analysis-detail">原因：' + escHtml(row.reason || '暂无原因判断') + '</div>' +
+      '<div class="analysis-detail">建议：' + escHtml(row.action || '继续观察该渠道的订单、AOV 与流量变化。') + '</div>' +
+      '</div>';
+  });
+
+  container.innerHTML = html;
+}
+
+function renderActionList(actions) {
+  var list = document.getElementById('aiActionList');
+  if (!list) return;
+
+  var rows = (actions || []).slice(0, 6);
+
+  if (!rows.length) {
+    list.innerHTML = '<li>暂无明显异常，继续观察 Top 10 渠道变化。</li>';
+    return;
+  }
+
+  list.innerHTML = rows.map(function (item) {
+    return '<li>' + escHtml(item) + '</li>';
+  }).join('');
+}
+
+function findTrendInsight(channel) {
+  if (!_analysisSummary) return null;
+
+  var target = String(channel || '').toLowerCase();
+  var rows = []
+    .concat(_analysisSummary.rising_channels || [])
+    .concat(_analysisSummary.falling_channels || []);
+
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].channel || '').toLowerCase() === target) {
+      return rows[i];
+    }
+  }
+
+  return null;
+}
+
+// ============================================
 // Utils
 // ============================================
 
@@ -494,7 +606,9 @@ function escHtml(s) {
   return String(s || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ============================================
@@ -569,6 +683,7 @@ function loadAllData() {
 
     if (dashboard) {
       updateKPIs(dashboard.kpi);
+      renderAIAnalysis(dashboard.analysis || null);
 
       if (dashboard.chart) {
         _chartData.today = dashboard.chart.today || new Array(24).fill(0);
@@ -599,9 +714,18 @@ function loadAllData() {
     }
 
     if (channels) {
+      if ((!dashboard || !_analysisSummary) && channels.ai_summary) {
+        renderAIAnalysis({
+          ai_summary: channels.ai_summary,
+          channels_top10: channels.channels || [],
+          totals: channels.totals || {},
+          previous_totals: channels.previous_totals || {}
+        });
+      }
+
       if (channels.channels) {
-        renderTraffic(channels.channels);
-        renderTable(channels.channels);
+        renderTraffic(channels.channels.slice(0, 10));
+        renderTable(channels.channels.slice(0, 10));
       }
 
       renderAttributionData(channels.attribution || { first_touch: [], last_touch: [] });
