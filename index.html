@@ -248,6 +248,107 @@ body {
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
+
+/* ============================================
+   AI Analysis Panel
+   ============================================ */
+.section-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  letter-spacing: 0.2px;
+}
+.analysis-summary {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 14px;
+}
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.analysis-card {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 14px;
+}
+.analysis-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.analysis-item {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+}
+.analysis-item.up { border-left-color: var(--accent); }
+.analysis-item.down { border-left-color: var(--red); }
+.analysis-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.analysis-channel {
+  font-size: 13px;
+  font-weight: 700;
+}
+.analysis-change {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+.analysis-change.up { color: var(--accent); }
+.analysis-change.down { color: var(--red); }
+.analysis-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.analysis-actions {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 14px;
+}
+.analysis-actions ul {
+  padding-left: 18px;
+}
+.analysis-actions li {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.analysis-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.delta-up { color: var(--accent); font-weight: 700; }
+.delta-down { color: var(--red); font-weight: 700; }
+.delta-flat { color: var(--text-secondary); }
+
+@media (max-width: 768px) {
+  .analysis-grid { grid-template-columns: 1fr; }
+}
+
 /* ============================================
    Loading
    ============================================ */
@@ -341,9 +442,9 @@ body {
 
     <!-- New: ROAS -->
     <div class="kpi-card">
-      <div class="kpi-label">📊 ROAS</div>
+      <div class="kpi-label">📊 当日 ROI</div>
       <div class="kpi-value" id="kpiROAS">—</div>
-      <div class="kpi-sub">Revenue / Ad Spend</div>
+      <div class="kpi-sub">Sales / Marketing Spend</div>
     </div>
 
     <!-- New: Refund Rate -->
@@ -375,6 +476,42 @@ body {
   </div>
 
   <!-- ============================================
+       AI Data Analysis
+       ============================================ -->
+  <div class="section" id="aiAnalysisSection">
+    <div class="section-header">
+      <div class="section-title">🧠 AI 数据分析总结</div>
+      <div class="section-note" id="analysisModel">Last Non-Click · Top 10</div>
+    </div>
+    <div class="panel">
+      <div class="analysis-summary" id="aiSummaryText">正在加载渠道分析...</div>
+
+      <div class="analysis-grid">
+        <div class="analysis-card">
+          <div class="analysis-title">上涨渠道原因</div>
+          <div class="analysis-list" id="aiRisingList">
+            <div class="analysis-empty">暂无上涨渠道数据</div>
+          </div>
+        </div>
+
+        <div class="analysis-card">
+          <div class="analysis-title">下降渠道原因</div>
+          <div class="analysis-list" id="aiFallingList">
+            <div class="analysis-empty">暂无下降渠道数据</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="analysis-actions">
+        <div class="analysis-title">行动建议</div>
+        <ul id="aiActionList">
+          <li>暂无建议，等待数据加载。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
        Funnel + Traffic (side by side)
        ============================================ -->
   <div class="grid-2">
@@ -393,7 +530,7 @@ body {
     <!-- Traffic Sources -->
     <div class="section">
       <div class="section-header">
-        <div class="section-title">📡 流量来源</div>
+        <div class="section-title">📡 Last Non-Click 渠道 Top 10</div>
       </div>
       <div class="panel">
         <div id="trafficDonut">
@@ -408,7 +545,7 @@ body {
        ============================================ -->
   <div class="section">
     <div class="section-header">
-      <div class="section-title">📋 渠道业绩明细</div>
+      <div class="section-title">📋 渠道业绩 Top 10（Last Non-Click）</div>
     </div>
     <div class="panel">
       <div class="table-scroll">
@@ -419,15 +556,17 @@ body {
               <th>Sessions</th>
               <th>订单</th>
               <th>销售额</th>
+              <th>较上期</th>
               <th>AOV</th>
               <th>转化率</th>
               <th>花费</th>
-              <th>ROAS</th>
+              <th>ROI</th>
               <th>CPA</th>
+              <th>趋势原因</th>
             </tr>
           </thead>
           <tbody id="channelTableBody">
-            <tr><td colspan="9"><div class="loading-placeholder"></div></td></tr>
+            <tr><td colspan="11"><div class="loading-placeholder"></div></td></tr>
           </tbody>
         </table>
       </div>
