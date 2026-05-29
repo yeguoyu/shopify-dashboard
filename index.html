@@ -409,7 +409,7 @@ body {
        ============================================ -->
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-label">💰 今日销售额</div>
+      <div class="kpi-label">💰 销售额</div>
       <div class="kpi-value" id="kpiRevenue">$0</div>
       <div class="kpi-delta" id="kpiRevenueDelta">—</div>
     </div>
@@ -435,7 +435,7 @@ body {
 
     <!-- New: Ad Spend -->
     <div class="kpi-card">
-      <div class="kpi-label">💵 今日广告花费</div>
+      <div class="kpi-label">💵 广告花费</div>
       <div class="kpi-value" id="kpiAdSpend">$0</div>
       <div id="channelSpendList" style="margin-top: 8px;"></div>
     </div>
@@ -462,11 +462,11 @@ body {
     <div class="panel">
       <div class="chart-header">
         <div class="chart-legend">
-          <span><span class="dot dot-today"></span><span id="legendToday">今天 $0</span></span>
-          <span><span class="dot dot-yday"></span><span id="legendYday">昨天 $0</span></span>
+          <span><span class="dot dot-today"></span><span id="legendToday">当前 $0</span></span>
+          <span><span class="dot dot-yday"></span><span id="legendYday">对比 $0</span></span>
         </div>
         <div class="chip-group">
-          <button class="chip active" onclick="setChartRange(this,'24h')">24h</button>
+          <button class="chip active" onclick="setChartRange(this,'24h')">日</button>
           <button class="chip" onclick="setChartRange(this,'7d')">7d</button>
           <button class="chip" onclick="setChartRange(this,'30d')">30d</button>
         </div>

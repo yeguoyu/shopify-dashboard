@@ -1,0 +1,38 @@
+# ============================================
+# Thermal Master — Cloudflare Worker Config
+# ============================================
+
+name = "thermal-master-api"
+main = "src/worker.js"
+compatibility_date = "2024-12-01"
+
+# ---- D1 Database Binding ----
+[[d1_databases]]
+binding = "DB"
+database_name = "thermal-master-db"
+database_id = "d7a847f7-3c97-4752-9d4e-adea1b625708"   # ← 创建 D1 后替换
+
+# ---- Environment Variables ----
+[vars]
+DASHBOARD_URL = "https://yeguoyu.github.io/shopify-dashboard/"
+FEISHU_REPORT_TIMEZONE = "Asia/Shanghai"
+FEISHU_REPORT_HOUR = "9"
+FEISHU_REPORT_DATE_OFFSET_DAYS = "1"
+META_API_VERSION = "v25.0"
+META_ATTRIBUTION_WINDOWS = "[\"1d_click\",\"7d_click\",\"1d_view\"]"
+META_SYNC_LEVEL = "campaign"
+
+# ---- Secrets (通过命令行设置，不要写在这里) ----
+# wrangler secret put SHOPIFY_WEBHOOK_SECRET
+# wrangler secret put SHOPIFY_STORE
+# wrangler secret put SHOPIFY_ADMIN_TOKEN
+# wrangler secret put FEISHU_WEBHOOK
+# wrangler secret put API_WRITE_TOKEN
+# wrangler secret put META_ACCESS_TOKEN
+# wrangler secret put META_AD_ACCOUNT_ID
+
+# ---- Cron Triggers ----
+# Cloudflare Cron 使用 UTC。这里每小时第 5 分钟触发一次；
+# Worker 内部会按 FEISHU_REPORT_TIMEZONE / FEISHU_REPORT_HOUR 判断，只推送一次。
+[triggers]
+crons = ["5 * * * *"]

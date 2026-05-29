@@ -1,0 +1,101 @@
+<!-- ============================================
+  Thermal Master — UTM 持久化脚本
+  
+  安装位置：Shopify 后台 → Online Store → Themes → Edit code
+  打开 layout/theme.liquid，在 </body> 标签前粘贴此代码
+  
+  作用：将用户首次进站的 UTM 参数保存到 sessionStorage，
+  并在每次加购/结账时自动写入 cart attributes，
+  确保订单级别的 UTM 归因数据不丢失。
+============================================ -->
+
+<script>
+(function() {
+  'use strict';
+
+  var UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+  var STORAGE_KEY = 'tm_utm_params';
+
+  // 1. 从 URL 提取 UTM 参数
+  function getUTMFromURL() {
+    var params = {};
+    var search = window.location.search;
+    if (!search) return null;
+    
+    var hasUTM = false;
+    UTM_KEYS.forEach(function(key) {
+      var match = search.match(new RegExp('[?&]' + key + '=([^&]*)'));
+      if (match) {
+        params[key] = decodeURIComponent(match[1]);
+        hasUTM = true;
+      }
+    });
+    
+    return hasUTM ? params : null;
+  }
+
+  // 2. 保存到 sessionStorage（First Touch 保留策略）
+  function saveUTM(params) {
+    try {
+      // 仅在没有已保存数据时写入（First Touch）
+      // 如需 Last Touch 策略，删除 if 判断
+      if (!sessionStorage.getItem(STORAGE_KEY)) {
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+      }
+    } catch(e) {}
+  }
+
+  // 3. 读取已保存的 UTM
+  function getSavedUTM() {
+    try {
+      var stored = sessionStorage.getItem(STORAGE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch(e) {
+      return null;
+    }
+  }
+
+  // 4. 写入 cart attributes
+  function writeToCart(utmData) {
+    if (!utmData) return;
+
+    var attributes = {};
+    UTM_KEYS.forEach(function(key) {
+      if (utmData[key]) {
+        attributes[key] = utmData[key];
+      }
+    });
+
+    // 同时保存 landing page 和 referrer
+    attributes['landing_page'] = utmData['landing_page'] || window.location.pathname;
+    attributes['referrer'] = utmData['referrer'] || document.referrer;
+    attributes['first_visit_at'] = utmData['first_visit_at'] || new Date().toISOString();
+
+    fetch('/cart/update.js', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attributes: attributes }),
+    }).catch(function() {});
+  }
+
+  // 5. 初始化
+  var urlParams = getUTMFromURL();
+  if (urlParams) {
+    urlParams['landing_page'] = window.location.pathname + window.location.search;
+    urlParams['referrer'] = document.referrer;
+    urlParams['first_visit_at'] = new Date().toISOString();
+    saveUTM(urlParams);
+  }
+
+  // 6. 每次页面加载都尝试写入 cart（确保不丢失）
+  var savedUTM = getSavedUTM();
+  if (savedUTM) {
+    // 延迟执行，避免与页面加载冲突
+    setTimeout(function() {
+      writeToCart(savedUTM);
+    }, 1500);
+  }
+
+  console.log('[TM UTM] UTM persistence loaded', savedUTM || 'no UTM params');
+})();
+</script>

@@ -8,6 +8,8 @@
 var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 
 var _currentRange = 'today';
+var _selectedDate = null;
+var _dataStatus = null;
 var _chartData = { today: new Array(24).fill(0), yesterday: new Array(24).fill(0), labels: [], mode: 'hourly' };
 var _analysisSummary = null;
 
@@ -16,7 +18,20 @@ var _analysisSummary = null;
 // ============================================
 
 function getRangeQuery() {
-  return '?range=' + encodeURIComponent(_currentRange);
+  var query = '?range=' + encodeURIComponent(_currentRange);
+
+  if (_selectedDate) {
+    query += '&date=' + encodeURIComponent(_selectedDate);
+  }
+
+  return query;
+}
+
+function fetchDataStatus() {
+  return fetch(API_BASE + '/api/data-status').then(function (r) {
+    if (!r.ok) throw new Error('Data status API ' + r.status);
+    return r.json();
+  });
 }
 
 function fetchDashboard() {
@@ -317,8 +332,12 @@ function renderSalesChart() {
 }
 
 function updateChartLegend(todayTotal, ydayTotal) {
-  var currentLabel = _currentRange === 'today' ? '今天 ' : '当前 ';
-  var previousLabel = _currentRange === 'today' ? '昨天 ' : '对比 ';
+  var currentLabel = _currentRange === 'today'
+    ? formatShortDate(_selectedDate) + ' '
+    : '当前 ';
+  var previousLabel = _currentRange === 'today'
+    ? '对比前日 '
+    : '对比 ';
 
   setText('legendToday', currentLabel + fmtMoney(todayTotal));
   setText('legendYday', previousLabel + fmtMoney(ydayTotal));
@@ -662,21 +681,36 @@ function refreshDashboard() {
 // Load All Data
 // ============================================
 
-function loadAllData() {
-  return Promise.all([
-    fetchDashboard().catch(function (e) {
-      console.warn('Dashboard fetch failed:', e);
-      return null;
-    }),
-    fetchChannels().catch(function (e) {
-      console.warn('Channels fetch failed:', e);
-      return null;
-    }),
-    fetchFunnel().catch(function (e) {
-      console.warn('Funnel fetch failed:', e);
-      return null;
+function resolveDashboardDate() {
+  return fetchDataStatus()
+    .then(function (status) {
+      _dataStatus = status || null;
+      _selectedDate = status && status.default_date ? status.default_date : null;
+      updateDateDisplay();
     })
-  ]).then(function (results) {
+    .catch(function (e) {
+      console.warn('Data status fetch failed:', e);
+      updateDateDisplay();
+    });
+}
+
+function loadAllData() {
+  return resolveDashboardDate().then(function () {
+    return Promise.all([
+      fetchDashboard().catch(function (e) {
+        console.warn('Dashboard fetch failed:', e);
+        return null;
+      }),
+      fetchChannels().catch(function (e) {
+        console.warn('Channels fetch failed:', e);
+        return null;
+      }),
+      fetchFunnel().catch(function (e) {
+        console.warn('Funnel fetch failed:', e);
+        return null;
+      })
+    ]);
+  }).then(function (results) {
     var dashboard = results[0];
     var channels = results[1];
     var funnel = results[2];
@@ -756,10 +790,38 @@ function updateDateDisplay() {
   var el = document.getElementById('dateDisplay');
   if (!el) return;
 
+  if (_selectedDate) {
+    var prefix = _dataStatus && _dataStatus.is_showing_latest_order_date
+      ? '最新数据 '
+      : '数据日期 ';
+
+    el.textContent = prefix + formatLongDate(_selectedDate);
+    return;
+  }
+
   var now = new Date();
   var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
   el.textContent = months[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
+}
+
+function formatShortDate(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) {
+    return '当前';
+  }
+
+  return dateStr.slice(5);
+}
+
+function formatLongDate(dateStr) {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) {
+    return '';
+  }
+
+  var parts = dateStr.split('-').map(Number);
+  var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  return months[parts[1] - 1] + ' ' + parts[2] + ', ' + parts[0];
 }
 
 // ============================================
