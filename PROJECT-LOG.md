@@ -223,6 +223,8 @@
 - `git diff --check` 通过，只有 CRLF 提示。
 - 线上 D1 执行 `migrations/2026-05-29-agent-catalog-logs.sql` 成功。
 - `npx wrangler deploy` 成功，Worker Version ID: `dc9dc160-fdf6-436f-81ed-dc470bc87b1d`。
+- 线上 `/api/agentic-summary?range=today&date=2026-05-28` 正常返回；当前识别到 ChatGPT 会话 23、Claude 会话 3，AI 渠道订单为 0。
+- 已推送到 GitHub `main`，提交 `f9b07d2`；GitHub Pages 的 `index.html` 和 `app.js` 已确认包含 `agenticSummarySection` 和 `/api/agentic-summary`。
 
 未解决事项：
 - 当前 D1 里的订单归因大多仍是 Direct/Pending Attribution；如果 Shopify Admin 已经出现 Agentic channel，但 D1 没有同步相应字段，AI 渠道订单会暂时为空。
