@@ -211,7 +211,7 @@
 内容：
 - 新增 `GET /api/agentic-summary`，按当前 range/date 返回 AI 智能体渠道 `summary`、`kpi`、平台表现、订单清单、首单获客客户、Catalog API logs 和 Shopify Admin 入口映射。
 - 后端基于现有 D1 订单归因、UTM、referrer、landing site 和 pixel session 识别 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot、Agentic 等来源。
-- 没有 AI 渠道订单时不再把 AI AOV 与 Direct AOV 显示为 `-100%`，避免把“暂无订单”误读成渠道质量下降。
+- 没有 AI 渠道订单时不再把 AI AOV 与 Direct AOV 显示为 `-100%`，前端提示改为 `AI AOV 暂无订单`，避免把“暂无订单”误读成渠道质量下降。
 - 前端新增 `Shopify 智能体渠道总结` 板块，展示 AI 渠道销售额、订单、会话、AOV、CVR、首单获客、平台表现、订单清单、客户清单和 SKU + Agent 抓取日志。
 - 新增 `agent_catalog_logs` 表和迁移文件，预留 Catalog API logs 的 SKU/Agent 粒度统计。
 - README 和部署指南补充新接口、D1 migration、验证命令和当前数据口径说明。

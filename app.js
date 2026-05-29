@@ -627,7 +627,10 @@ function renderAgenticSummary(data) {
 
   var aovNote = document.getElementById('agenticAOVNote');
   if (aovNote) {
-    if (kpi.aov_vs_direct_pct == null) {
+    if (!kpi.orders) {
+      aovNote.textContent = 'AI AOV 暂无订单';
+      aovNote.className = 'agentic-note';
+    } else if (kpi.aov_vs_direct_pct == null) {
       aovNote.textContent = 'Direct AOV 暂无基准';
       aovNote.className = 'agentic-note';
     } else {
