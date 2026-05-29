@@ -47,6 +47,9 @@ export default {
       if (path === '/api/ai-analysis' && request.method === 'GET')
         return handleAIAnalysis(request, env, corsHeaders);
 
+      if (path === '/api/agentic-summary' && request.method === 'GET')
+        return handleAgenticSummary(request, env, corsHeaders);
+
       if (path === '/api/order-journey' && request.method === 'GET')
       return handleOrderJourney(request, env, corsHeaders);
 
@@ -2675,6 +2678,379 @@ async function handleAIAnalysis(request, env, cors) {
     previous_end: rangeWindow.previousEnd,
     ...analysis,
   }, 200, cors);
+}
+
+// ============================================
+// Shopify Agentic / AI Channel Summary
+// ============================================
+
+function isAgenticChannelName(channel) {
+  const value = normalizeChannelName(channel || '').toLowerCase();
+
+  return (
+    value === 'ai referral' ||
+    value === 'agentic' ||
+    value === 'agentic channel' ||
+    value.includes('chatgpt') ||
+    value.includes('openai') ||
+    value.includes('perplexity') ||
+    value.includes('gemini') ||
+    value.includes('claude') ||
+    value.includes('copilot')
+  );
+}
+
+function hasAgenticText(value) {
+  const text = String(value || '').toLowerCase();
+
+  return (
+    text.includes('chatgpt') ||
+    text.includes('openai') ||
+    text.includes('perplexity') ||
+    text.includes('gemini') ||
+    text.includes('claude') ||
+    text.includes('copilot') ||
+    text.includes('agentic') ||
+    text.includes('ai_agent') ||
+    text.includes('ai-agent') ||
+    text.includes('ai referral')
+  );
+}
+
+function detectAgenticPlatformFromText(value) {
+  const text = String(value || '').toLowerCase();
+
+  if (text.includes('chatgpt') || text.includes('openai')) return 'ChatGPT';
+  if (text.includes('perplexity')) return 'Perplexity';
+  if (text.includes('gemini') || text.includes('bard')) return 'Gemini';
+  if (text.includes('claude') || text.includes('anthropic')) return 'Claude';
+  if (text.includes('copilot') || text.includes('bing')) return 'Copilot';
+  if (text.includes('agentic')) return 'Agentic';
+
+  return 'AI Agent';
+}
+
+function getOrderAttributionChannel(row) {
+  return getLastNonClickChannelFromOrder({
+    channel: row.channel,
+    first_touch_channel: row.first_touch_channel,
+    last_touch_channel: row.last_touch_channel
+  });
+}
+
+function isAgenticOrderRow(row) {
+  const values = [
+    row.channel,
+    row.first_touch_channel,
+    row.last_touch_channel,
+    row.utm_source,
+    row.utm_medium,
+    row.utm_campaign,
+    row.utm_content,
+    row.utm_term,
+    row.landing_site,
+    row.referring_site
+  ];
+
+  return values.some((value) => isAgenticChannelName(value) || hasAgenticText(value));
+}
+
+function getAgenticPlatformFromOrder(row) {
+  const values = [
+    row.utm_source,
+    row.utm_campaign,
+    row.utm_content,
+    row.utm_term,
+    row.referring_site,
+    row.landing_site,
+    row.first_touch_channel,
+    row.last_touch_channel,
+    row.channel
+  ];
+
+  for (const value of values) {
+    if (hasAgenticText(value) || isAgenticChannelName(value)) {
+      return detectAgenticPlatformFromText(value);
+    }
+  }
+
+  return 'AI Agent';
+}
+
+function buildAgenticReportLocations() {
+  return [
+    {
+      location: 'Analytics -> Reports -> Sales by channel',
+      data: 'AI 渠道独立销售额 / 订单数 / AOV',
+      granularity: '日 / 周 / 月'
+    },
+    {
+      location: 'Analytics -> Reports -> Sessions by channel',
+      data: 'AI 渠道独立会话数',
+      granularity: '日 / 周 / 月'
+    },
+    {
+      location: 'Orders -> Filter: Agentic channel',
+      data: 'AI 渠道订单清单，含来源平台标签',
+      granularity: '单订单粒度'
+    },
+    {
+      location: 'Customers -> Acquired via Agentic',
+      data: 'AI 渠道首单获客的客户列表',
+      granularity: '客户粒度'
+    },
+    {
+      location: 'Catalog -> API logs',
+      data: '哪些 AI Agent 在抓取哪些 SKU',
+      granularity: 'SKU + Agent 粒度'
+    }
+  ];
+}
+
+async function queryAgenticOrderRows(env, startDate, endDate) {
+  const rows = await env.DB.prepare(
+    `SELECT
+      order_id,
+      order_name,
+      total_price,
+      customer_id,
+      customer_email,
+      shopify_created_at,
+      channel,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      utm_content,
+      utm_term,
+      first_touch_channel,
+      first_touch_campaign,
+      last_touch_channel,
+      last_touch_campaign,
+      landing_site,
+      referring_site
+     FROM orders
+     WHERE substr(shopify_created_at, 1, 10) >= ?
+       AND substr(shopify_created_at, 1, 10) <= ?
+     ORDER BY shopify_created_at DESC
+     LIMIT 5000`
+  ).bind(startDate, endDate).all();
+
+  return rows.results || [];
+}
+
+async function queryAgenticSessions(env, startDate, endDate) {
+  const rows = await env.DB.prepare(
+    `SELECT
+      COALESCE(utm_source, '') as source,
+      COALESCE(utm_medium, '') as medium,
+      COALESCE(utm_campaign, '') as campaign,
+      COALESCE(utm_content, '') as content,
+      COALESCE(referrer, '') as referrer,
+      COUNT(DISTINCT session_id) as sessions
+     FROM pixel_events
+     WHERE event_name = 'page_viewed'
+       AND DATE(timestamp) >= ?
+       AND DATE(timestamp) <= ?
+     GROUP BY source, medium, campaign, content, referrer`
+  ).bind(startDate, endDate).all();
+
+  let sessions = 0;
+  const platforms = {};
+
+  (rows.results || []).forEach((row) => {
+    const rowText = [
+      row.source,
+      row.medium,
+      row.campaign,
+      row.content,
+      row.referrer
+    ].join(' ');
+
+    const channel = classifyChannel(row.source, row.medium, row.referrer, '');
+
+    if (isAgenticChannelName(channel) || hasAgenticText(rowText)) {
+      sessions += safeNumber(row.sessions);
+
+      const platform = detectAgenticPlatformFromText(rowText);
+      platforms[platform] = (platforms[platform] || 0) + safeNumber(row.sessions);
+    }
+  });
+
+  return {
+    sessions,
+    platforms
+  };
+}
+
+async function queryAgenticAcquiredCustomers(env, agenticOrders) {
+  const customers = [];
+
+  for (const row of agenticOrders.slice(0, 25)) {
+    const customerKey = row.customer_id || row.customer_email;
+
+    if (!customerKey) continue;
+
+    const firstOrder = await env.DB.prepare(
+      `SELECT
+        order_id,
+        order_name,
+        total_price,
+        shopify_created_at
+       FROM orders
+       WHERE (customer_id = ? OR customer_email = ?)
+       ORDER BY shopify_created_at ASC
+       LIMIT 1`
+    ).bind(row.customer_id || '', row.customer_email || '').first();
+
+    if (firstOrder && String(firstOrder.order_id) === String(row.order_id)) {
+      customers.push({
+        customer_id: row.customer_id || null,
+        customer_email: row.customer_email || null,
+        first_order_id: row.order_id,
+        first_order_name: row.order_name,
+        first_order_at: row.shopify_created_at,
+        first_order_value: safeNumber(row.total_price),
+        platform: getAgenticPlatformFromOrder(row)
+      });
+    }
+  }
+
+  return customers.slice(0, 10);
+}
+
+async function queryAgenticCatalogLogs(env, startDate, endDate) {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT
+        agent_name,
+        sku,
+        product_id,
+        product_title,
+        COUNT(*) as requests,
+        MAX(requested_at) as last_requested_at
+       FROM agent_catalog_logs
+       WHERE substr(requested_at, 1, 10) >= ?
+         AND substr(requested_at, 1, 10) <= ?
+       GROUP BY agent_name, sku, product_id, product_title
+       ORDER BY requests DESC, last_requested_at DESC
+       LIMIT 10`
+    ).bind(startDate, endDate).all();
+
+    return rows.results || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+async function buildAgenticSummary(env, rangeWindow) {
+  const rows = await queryAgenticOrderRows(env, rangeWindow.start, rangeWindow.end);
+  const previousRows = await queryAgenticOrderRows(env, rangeWindow.previousStart, rangeWindow.previousEnd);
+  const agenticOrders = rows.filter(isAgenticOrderRow);
+  const previousAgenticOrders = previousRows.filter(isAgenticOrderRow);
+  const directOrders = rows.filter((row) => getOrderAttributionChannel(row) === 'Direct');
+  const sessions = await queryAgenticSessions(env, rangeWindow.start, rangeWindow.end);
+  const previousSessions = await queryAgenticSessions(env, rangeWindow.previousStart, rangeWindow.previousEnd);
+  const customers = await queryAgenticAcquiredCustomers(env, agenticOrders);
+  const catalogLogs = await queryAgenticCatalogLogs(env, rangeWindow.start, rangeWindow.end);
+
+  const revenue = agenticOrders.reduce((sum, row) => sum + safeNumber(row.total_price), 0);
+  const previousRevenue = previousAgenticOrders.reduce((sum, row) => sum + safeNumber(row.total_price), 0);
+  const directRevenue = directOrders.reduce((sum, row) => sum + safeNumber(row.total_price), 0);
+  const aov = agenticOrders.length ? revenue / agenticOrders.length : 0;
+  const previousAov = previousAgenticOrders.length
+    ? previousRevenue / previousAgenticOrders.length
+    : 0;
+  const directAov = directOrders.length ? directRevenue / directOrders.length : 0;
+  const aovVsDirectPct = agenticOrders.length > 0 && directAov > 0
+    ? ((aov - directAov) / directAov) * 100
+    : null;
+
+  const platformMap = {};
+
+  agenticOrders.forEach((row) => {
+    const platform = getAgenticPlatformFromOrder(row);
+
+    if (!platformMap[platform]) {
+      platformMap[platform] = {
+        platform,
+        orders: 0,
+        revenue: 0,
+        sessions: sessions.platforms[platform] || 0
+      };
+    }
+
+    platformMap[platform].orders += 1;
+    platformMap[platform].revenue += safeNumber(row.total_price);
+  });
+
+  Object.keys(sessions.platforms).forEach((platform) => {
+    if (!platformMap[platform]) {
+      platformMap[platform] = {
+        platform,
+        orders: 0,
+        revenue: 0,
+        sessions: sessions.platforms[platform] || 0
+      };
+    }
+  });
+
+  const platforms = Object.values(platformMap)
+    .sort((a, b) => b.revenue - a.revenue || b.sessions - a.sessions)
+    .map((row) => ({
+      ...row,
+      aov: row.orders ? row.revenue / row.orders : 0,
+      conversion_rate: row.sessions > 0 ? (row.orders / row.sessions) * 100 : 0
+    }));
+
+  const topPlatform = platforms[0]?.platform || 'AI Agent';
+  const summary = agenticOrders.length
+    ? `本期 ${topPlatform} 等 AI 智能体渠道带来 ${agenticOrders.length} 单，销售额 ${shortMoney(revenue)}，AOV ${shortMoney(aov)}${aovVsDirectPct === null ? '' : `，比 Direct ${aovVsDirectPct >= 0 ? '高' : '低'} ${Math.abs(aovVsDirectPct).toFixed(1)}%`}。`
+    : `本期未识别到 AI 智能体渠道订单；如果 Shopify Admin 已有 Agentic channel，请检查订单 UTM、referrer 或 customerJourney 是否已同步。`;
+
+  return {
+    range: rangeWindow.range,
+    start: rangeWindow.start,
+    end: rangeWindow.end,
+    previous_start: rangeWindow.previousStart,
+    previous_end: rangeWindow.previousEnd,
+    report_locations: buildAgenticReportLocations(),
+    summary,
+    kpi: {
+      revenue,
+      previous_revenue: previousRevenue,
+      orders: agenticOrders.length,
+      previous_orders: previousAgenticOrders.length,
+      sessions: sessions.sessions,
+      previous_sessions: previousSessions.sessions,
+      aov,
+      previous_aov: previousAov,
+      direct_aov: directAov,
+      aov_vs_direct_pct: aovVsDirectPct,
+      conversion_rate: sessions.sessions > 0 ? (agenticOrders.length / sessions.sessions) * 100 : 0,
+      acquired_customers: customers.length,
+      catalog_log_count: catalogLogs.reduce((sum, row) => sum + safeNumber(row.requests), 0)
+    },
+    platforms,
+    orders: agenticOrders.slice(0, 10).map((row) => ({
+      order_id: row.order_id,
+      order_name: row.order_name,
+      total_price: safeNumber(row.total_price),
+      shopify_created_at: row.shopify_created_at,
+      customer_email: row.customer_email,
+      platform: getAgenticPlatformFromOrder(row),
+      campaign: row.utm_campaign || row.first_touch_campaign || row.last_touch_campaign || 'None'
+    })),
+    acquired_customers: customers,
+    catalog_logs: catalogLogs
+  };
+}
+
+async function handleAgenticSummary(request, env, cors) {
+  const url = new URL(request.url);
+  const rangeWindow = getRangeWindow(url);
+  const summary = await buildAgenticSummary(env, rangeWindow);
+
+  return json(summary, 200, cors);
 }
 
 // ============================================

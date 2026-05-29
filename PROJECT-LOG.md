@@ -192,3 +192,38 @@
 未解决事项：
 
 - GitHub Pages 需要推送 `index.html` 和 `app.js` 后前端才会生效。
+
+### 接入 Shopify 智能体渠道总结板块
+
+修改文件：
+- `src/worker.js`
+- `app.js`
+- `index.html`
+- `schema.sql`
+- `migrations/2026-05-29-agent-catalog-logs.sql`
+- `README.md`
+- `DEPLOYMENT-GUIDE.md`
+- `PROJECT-LOG.md`
+
+原因：
+- 用户希望在看板里新增一个 Shopify 智能体/AI 渠道总结板块，并包含图片里的 5 个 Shopify Admin 入口：Sales by channel、Sessions by channel、Orders Agentic filter、Customers Acquired via Agentic、Catalog API logs。
+
+内容：
+- 新增 `GET /api/agentic-summary`，按当前 range/date 返回 AI 智能体渠道 `summary`、`kpi`、平台表现、订单清单、首单获客客户、Catalog API logs 和 Shopify Admin 入口映射。
+- 后端基于现有 D1 订单归因、UTM、referrer、landing site 和 pixel session 识别 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot、Agentic 等来源。
+- 没有 AI 渠道订单时不再把 AI AOV 与 Direct AOV 显示为 `-100%`，避免把“暂无订单”误读成渠道质量下降。
+- 前端新增 `Shopify 智能体渠道总结` 板块，展示 AI 渠道销售额、订单、会话、AOV、CVR、首单获客、平台表现、订单清单、客户清单和 SKU + Agent 抓取日志。
+- 新增 `agent_catalog_logs` 表和迁移文件，预留 Catalog API logs 的 SKU/Agent 粒度统计。
+- README 和部署指南补充新接口、D1 migration、验证命令和当前数据口径说明。
+
+验证：
+- `node --check src/worker.js` 通过。
+- `node --check app.js` 通过。
+- SQLite 内存执行 `schema.sql` 和 `migrations/2026-05-29-agent-catalog-logs.sql` 通过。
+- `git diff --check` 通过，只有 CRLF 提示。
+- 线上 D1 执行 `migrations/2026-05-29-agent-catalog-logs.sql` 成功。
+- `npx wrangler deploy` 成功，Worker Version ID: `dc9dc160-fdf6-436f-81ed-dc470bc87b1d`。
+
+未解决事项：
+- 当前 D1 里的订单归因大多仍是 Direct/Pending Attribution；如果 Shopify Admin 已经出现 Agentic channel，但 D1 没有同步相应字段，AI 渠道订单会暂时为空。
+- `Catalog -> API logs` 目前只有表结构和看板展示位，后续需要在商品/catalog API 访问入口写入 `agent_catalog_logs`，才能真正统计 AI Agent 抓取 SKU。

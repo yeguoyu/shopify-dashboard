@@ -55,6 +55,13 @@ function fetchFunnel() {
   });
 }
 
+function fetchAgenticSummary() {
+  return fetch(API_BASE + '/api/agentic-summary' + getRangeQuery()).then(function (r) {
+    if (!r.ok) throw new Error('Agentic summary API ' + r.status);
+    return r.json();
+  });
+}
+
 // ============================================
 // Formatters
 // ============================================
@@ -600,6 +607,116 @@ function renderActionList(actions) {
   }).join('');
 }
 
+// ============================================
+// Shopify Agentic Summary
+// ============================================
+
+function renderAgenticSummary(data) {
+  if (!data) return;
+
+  setText('agenticSummaryText', data.summary || '暂无 Shopify 智能体渠道总结。');
+
+  var kpi = data.kpi || {};
+
+  setText('agenticSales', fmtMoney(kpi.revenue || 0));
+  setText('agenticOrders', fmtNum(kpi.orders || 0));
+  setText('agenticSessions', fmtNum(kpi.sessions || 0));
+  setText('agenticAOV', fmtMoney(kpi.aov || 0));
+  setText('agenticCVR', fmtPct(kpi.conversion_rate || 0));
+  setText('agenticCustomers', fmtNum(kpi.acquired_customers || 0));
+
+  var aovNote = document.getElementById('agenticAOVNote');
+  if (aovNote) {
+    if (kpi.aov_vs_direct_pct == null) {
+      aovNote.textContent = 'Direct AOV 暂无基准';
+      aovNote.className = 'agentic-note';
+    } else {
+      var pct = Number(kpi.aov_vs_direct_pct || 0);
+      aovNote.textContent = '较 Direct ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+      aovNote.className = 'agentic-note ' + (pct >= 0 ? 'up' : 'down');
+    }
+  }
+
+  renderAgenticReportLocations(data.report_locations || []);
+  renderAgenticPlatformRows(data.platforms || []);
+  renderAgenticOrders(data.orders || []);
+  renderAgenticCustomers(data.acquired_customers || []);
+  renderAgenticCatalogLogs(data.catalog_logs || []);
+}
+
+function renderAgenticReportLocations(rows) {
+  var tbody = document.getElementById('agenticReportBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = (rows || []).map(function (row) {
+    return '<tr>' +
+      '<td>' + escHtml(row.location) + '</td>' +
+      '<td>' + escHtml(row.data) + '</td>' +
+      '<td>' + escHtml(row.granularity) + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="3" style="text-align:center;opacity:0.5">暂无报表映射</td></tr>';
+}
+
+function renderAgenticPlatformRows(rows) {
+  var container = document.getElementById('agenticPlatformList');
+  if (!container) return;
+
+  if (!rows.length) {
+    container.innerHTML = '<div class="analysis-empty">暂无 AI 智能体平台数据</div>';
+    return;
+  }
+
+  container.innerHTML = rows.slice(0, 5).map(function (row) {
+    return '<div class="agentic-platform-row">' +
+      '<div><strong>' + escHtml(row.platform || 'AI Agent') + '</strong><span>' +
+      fmtNum(row.sessions || 0) + ' sessions / ' + fmtNum(row.orders || 0) + ' 单</span></div>' +
+      '<div>' + fmtMoney(row.revenue || 0) + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+function renderAgenticOrders(rows) {
+  var tbody = document.getElementById('agenticOrdersBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = rows.slice(0, 10).map(function (row) {
+    return '<tr>' +
+      '<td>' + escHtml(row.order_name || row.order_id || '-') + '</td>' +
+      '<td>' + escHtml(row.platform || 'AI Agent') + '</td>' +
+      '<td>' + fmtMoney(row.total_price || 0) + '</td>' +
+      '<td>' + escHtml(row.campaign || 'None') + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="4" style="text-align:center;opacity:0.5">暂无 AI 渠道订单</td></tr>';
+}
+
+function renderAgenticCustomers(rows) {
+  var tbody = document.getElementById('agenticCustomersBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = rows.slice(0, 10).map(function (row) {
+    return '<tr>' +
+      '<td>' + escHtml(row.customer_email || row.customer_id || '-') + '</td>' +
+      '<td>' + escHtml(row.platform || 'AI Agent') + '</td>' +
+      '<td>' + escHtml(row.first_order_name || row.first_order_id || '-') + '</td>' +
+      '<td>' + fmtMoney(row.first_order_value || 0) + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="4" style="text-align:center;opacity:0.5">暂无 AI 首单获客</td></tr>';
+}
+
+function renderAgenticCatalogLogs(rows) {
+  var tbody = document.getElementById('agenticCatalogBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = rows.slice(0, 10).map(function (row) {
+    return '<tr>' +
+      '<td>' + escHtml(row.agent_name || 'AI Agent') + '</td>' +
+      '<td>' + escHtml(row.sku || row.product_id || '-') + '</td>' +
+      '<td>' + escHtml(row.product_title || '-') + '</td>' +
+      '<td>' + fmtNum(row.requests || 0) + '</td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="4" style="text-align:center;opacity:0.5">暂无 Catalog API logs</td></tr>';
+}
+
 function findTrendInsight(channel) {
   if (!_analysisSummary) return null;
 
@@ -708,12 +825,17 @@ function loadAllData() {
       fetchFunnel().catch(function (e) {
         console.warn('Funnel fetch failed:', e);
         return null;
+      }),
+      fetchAgenticSummary().catch(function (e) {
+        console.warn('Agentic summary fetch failed:', e);
+        return null;
       })
     ]);
   }).then(function (results) {
     var dashboard = results[0];
     var channels = results[1];
     var funnel = results[2];
+    var agentic = results[3];
 
     if (dashboard) {
       updateKPIs(dashboard.kpi);
@@ -745,6 +867,10 @@ function loadAllData() {
 
     if (funnel) {
       renderFunnel(funnel);
+    }
+
+    if (agentic) {
+      renderAgenticSummary(agentic);
     }
 
     if (channels) {

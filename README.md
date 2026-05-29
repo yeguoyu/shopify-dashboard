@@ -55,6 +55,7 @@ var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 - `GET /api/channels?range=today|7d|30d`
 - `GET /api/funnel?range=today|7d|30d`
 - `GET /api/ai-analysis?range=today|7d|30d`
+- `GET /api/agentic-summary?range=today|7d|30d`
 
 ## Cloudflare Worker
 
@@ -77,6 +78,7 @@ main = "src/worker.js"
 - `POST /api/backfill-attribution`
 - `POST /api/meta/sync`
 - `GET /api/meta/insights`
+- `GET /api/agentic-summary`
 - `POST /api/feishu-sync`
 - `GET /api/order-journey?order_id=...`
 
@@ -104,6 +106,7 @@ main = "src/worker.js"
 ```bash
 wrangler d1 execute thermal-master-db --file=schema.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-meta-ad-insights.sql
+wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-agent-catalog-logs.sql
 wrangler deploy
 ```
 
@@ -119,6 +122,26 @@ curl -X POST "https://thermal-master-api.thermalmaster.workers.dev/api/meta/sync
 ```bash
 curl "https://thermal-master-api.thermalmaster.workers.dev/api/meta/insights?date=YYYY-MM-DD&level=campaign"
 ```
+
+查看 Shopify 智能体渠道总结：
+
+```bash
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/agentic-summary?range=today&date=YYYY-MM-DD"
+```
+
+## Shopify 智能体渠道总结
+
+看板新增了 `Shopify 智能体渠道总结` 板块，对齐 Shopify Admin 可直接查看的 5 个入口：
+
+- `Analytics -> Reports -> Sales by channel`：AI 渠道销售额、订单数、AOV。
+- `Analytics -> Reports -> Sessions by channel`：AI 渠道会话数。
+- `Orders -> Filter: Agentic channel`：AI 渠道订单清单和来源平台标签。
+- `Customers -> Acquired via Agentic`：AI 渠道首单获客客户。
+- `Catalog -> API logs`：AI Agent 抓取 SKU 的记录。
+
+当前后端接口是 `GET /api/agentic-summary`。它会先用 D1 现有的订单归因、UTM、referrer、pixel session 识别 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot、Agentic 等来源；如果 Shopify Admin 已有 Agentic channel，但 D1 还没同步到相应字段，板块会显示空数据并提示检查 UTM、referrer 或 customerJourney。
+
+`Catalog -> API logs` 依赖新增的 `agent_catalog_logs` 表，表结构已加入 `schema.sql` 和迁移文件；后续如果要精确看到 “哪个 AI Agent 抓了哪个 SKU”，还需要把商品/catalog API 访问日志写入这张表。
 
 语法检查：
 
@@ -144,5 +167,6 @@ node --check src/worker.js
 - `schema.sql` 已按当前 Worker 代码补齐 `orders` 归因字段、`ad_spend` 和 `refunds` 表。已有线上 D1 如果是旧结构，需要单独做迁移，不能只依赖 `CREATE TABLE IF NOT EXISTS` 自动补列。
 - 自动飞书日报使用 `FEISHU_REPORT_TIMEZONE` 判断推送时间，和 Shopify 数据时区 `SHOPIFY_TIMEZONE` 分开，避免北京时间 09:05 被洛杉矶时区判断跳过。
 - Meta 第一阶段接入会把 Meta Insights 写入 `meta_ad_insights`，并把每日 Facebook 花费回写到 `ad_spend`，让现有渠道 ROAS 和飞书日报直接使用 Meta 花费。
+- Shopify 智能体渠道总结已接入 `GET /api/agentic-summary`，前端会展示 AI 渠道销售额、订单、会话、AOV、首单获客和 Catalog API logs；真实 AI 订单数据取决于 Shopify/Pixel 是否已经把 Agentic 来源同步进 D1。
 - `src/worker - 副本.js` 是本地备份文件，先不作为正式源码提交。
 - `style.css` 目前未被 `index.html` 引用，后续可以再决定是否合并、恢复引用或移入归档。
