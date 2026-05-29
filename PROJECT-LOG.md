@@ -229,3 +229,25 @@
 未解决事项：
 - 当前 D1 里的订单归因大多仍是 Direct/Pending Attribution；如果 Shopify Admin 已经出现 Agentic channel，但 D1 没有同步相应字段，AI 渠道订单会暂时为空。
 - `Catalog -> API logs` 目前只有表结构和看板展示位，后续需要在商品/catalog API 访问入口写入 `agent_catalog_logs`，才能真正统计 AI Agent 抓取 SKU。
+
+### 补强 Shopify Agentic 订单归因识别
+
+修改文件：
+- `src/worker.js`
+- `PROJECT-LOG.md`
+
+原因：
+- 线上 `/api/backfill-attribution` 返回 `graphql_http_401`，说明当前 Shopify Admin GraphQL token 未通过认证；即使 token 修好，如果 Shopify 把 Agentic/ChatGPT 来源放在 `sourceName` 或 `customerJourneySummary.firstVisit.sourceDescription`，旧分类逻辑也可能在没有 UTM/referrer 时先判成 Direct。
+
+内容：
+- `classifyChannel()` 改为优先检查 `sourceName/sourceDescription` 中的 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot、Agentic 等文本，命中时归为 `AI Referral`。
+- `parseShopifyJourneyVisit()` 在没有 UTM campaign 时，会把 AI 平台名作为 campaign fallback，方便智能体板块识别具体平台。
+- `isAgenticOrderRow()` 和 `getAgenticPlatformFromOrder()` 增加 `first_touch_campaign`、`last_touch_campaign` 检测，让回填后的订单可以显示 ChatGPT/Claude 等平台。
+
+验证：
+- `node --check src/worker.js` 通过。
+- `git diff --check` 通过，只有 CRLF 提示。
+- `npx wrangler deploy` 成功，Worker Version ID: `d7b5a33e-ddae-4f83-88f5-f03001669001`。
+
+未解决事项：
+- 需要重新写入有效的 `SHOPIFY_ADMIN_TOKEN`，当前线上 GraphQL 返回 401，订单侧归因无法真正回填。

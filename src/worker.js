@@ -928,6 +928,14 @@ function parseShopifyJourneyVisit(visit) {
   const medium = utm.medium || '';
   const referrer = visit.referrerUrl || '';
   const sourceDescription = visit.sourceDescription || '';
+  const agenticText = [
+    source,
+    medium,
+    referrer,
+    sourceDescription,
+    visit.landingPage || ''
+  ].join(' ');
+  const isAgenticVisit = hasAgenticText(agenticText);
 
   let channel = classifyChannel(source, medium, referrer, sourceDescription);
 
@@ -945,7 +953,7 @@ function parseShopifyJourneyVisit(visit) {
 
   return {
     channel: normalizeChannelName(channel || 'No Conversion Details'),
-    campaign: utm.campaign || 'None'
+    campaign: utm.campaign || (isAgenticVisit ? detectAgenticPlatformFromText(agenticText) : 'None')
   };
 }
 
@@ -2742,7 +2750,9 @@ function isAgenticOrderRow(row) {
   const values = [
     row.channel,
     row.first_touch_channel,
+    row.first_touch_campaign,
     row.last_touch_channel,
+    row.last_touch_campaign,
     row.utm_source,
     row.utm_medium,
     row.utm_campaign,
@@ -2763,6 +2773,8 @@ function getAgenticPlatformFromOrder(row) {
     row.utm_term,
     row.referring_site,
     row.landing_site,
+    row.first_touch_campaign,
+    row.last_touch_campaign,
     row.first_touch_channel,
     row.last_touch_channel,
     row.channel
@@ -3763,6 +3775,11 @@ function classifyChannel(source, medium, referrer, sourceName) {
   const m = String(medium || '').toLowerCase().trim();
   const r = String(referrer || '').toLowerCase().trim();
   const sn = String(sourceName || '').toLowerCase().trim();
+  const combined = [s, m, r, sn].join(' ');
+
+  if (hasAgenticText(combined)) {
+    return 'AI Referral';
+  }
 
   if (!s && !m && !r) return 'Direct';
 
@@ -3908,8 +3925,17 @@ if (
   if (
     s.includes('chatgpt.com') ||
     s.includes('openai') ||
+    s.includes('perplexity') ||
+    s.includes('claude') ||
+    s.includes('gemini') ||
+    s.includes('copilot') ||
+    s.includes('agentic') ||
     r.includes('chatgpt.com') ||
-    r.includes('openai.com')
+    r.includes('openai.com') ||
+    r.includes('perplexity.ai') ||
+    r.includes('claude.ai') ||
+    r.includes('gemini.google.com') ||
+    r.includes('copilot.microsoft.com')
   ) {
     return 'AI Referral';
   }
@@ -4051,7 +4077,17 @@ if (
   if (
     v === 'chatgpt.com' ||
     v === 'chatgpt' ||
-    v === 'openai'
+    v === 'openai' ||
+    v === 'ai referral' ||
+    v === 'agentic' ||
+    v === 'agentic channel' ||
+    v === 'ai agent' ||
+    v.includes('chatgpt') ||
+    v.includes('openai') ||
+    v.includes('perplexity') ||
+    v.includes('claude') ||
+    v.includes('gemini') ||
+    v.includes('copilot')
   ) {
     return 'AI Referral';
   }
