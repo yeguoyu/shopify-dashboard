@@ -337,6 +337,58 @@ body {
   color: var(--text-secondary);
   line-height: 1.6;
 }
+.diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.diagnostic-card {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  padding: 12px;
+}
+.diagnostic-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.diagnostic-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.diagnostic-severity {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.diagnostic-severity.high {
+  color: #fff;
+  background: var(--red);
+}
+.diagnostic-severity.medium {
+  color: #111;
+  background: #f5b84b;
+}
+.diagnostic-severity.info {
+  color: #111;
+  background: var(--accent);
+}
+.diagnostic-line {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  margin-top: 6px;
+}
+.diagnostic-line strong {
+  color: var(--text-primary);
+}
 .analysis-empty {
   color: var(--text-tertiary);
   font-size: 12px;
@@ -530,6 +582,11 @@ body {
     </div>
     <div class="panel">
       <div class="analysis-summary" id="aiSummaryText">正在加载渠道分析...</div>
+
+      <div class="analysis-title">问题诊断与修复排查</div>
+      <div class="diagnostic-grid" id="aiDiagnosticList">
+        <div class="analysis-empty">正在加载诊断...</div>
+      </div>
 
       <div class="analysis-grid">
         <div class="analysis-card">

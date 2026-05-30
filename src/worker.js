@@ -2541,6 +2541,117 @@ function buildChannelAction(row, direction) {
   return `${channel} 销售额下降，建议优先抽查该渠道最近订单、落地页和广告/内容入口。`;
 }
 
+function buildAnalysisDiagnostics(currentDataset, previousDataset, mergedRows, rising, falling, paidNoSpend, noConversionRow) {
+  const diagnostics = [];
+  const otherRow = mergedRows.find((row) => row.channel === 'Other' && row.orders > 0);
+  const topFalling = falling[0] || null;
+
+  if (paidNoSpend.length) {
+    const names = paidNoSpend.slice(0, 4).map((row) => `${row.channel} ${row.orders}单`).join('、');
+    diagnostics.push({
+      severity: 'high',
+      title: '付费渠道有订单但广告花费为 $0',
+      impact: 'ROI、CPA 和预算判断会失真，飞书日报也无法判断这些渠道是否值得放量。',
+      evidence: names,
+      checks: [
+        '检查 Meta/Google/Bing 广告 API 是否已同步当天花费。',
+        '检查 ad_spend 表是否存在对应日期和渠道记录。',
+        '检查广告账户时区是否和看板日期错位。'
+      ],
+      fixes: [
+        '优先补齐广告花费同步；Meta 可执行 /api/meta/sync，其他渠道先用 /api/ad-spend 手动补录。',
+        '确认渠道名称统一为 Facebook、Google Ads、Bing，避免 spend 和订单渠道对不上。',
+        '同步后刷新 /api/dashboard?range=today 验证 ROI/CPA 是否恢复。'
+      ]
+    });
+  }
+
+  if (noConversionRow && noConversionRow.orders > 0) {
+    diagnostics.push({
+      severity: 'medium',
+      title: 'No Conversion Details 订单仍偏多',
+      impact: 'Shopify 没有给这些订单转化路径，会影响渠道归因和后续投放判断。',
+      evidence: `${noConversionRow.orders}单 / ${shortMoney(noConversionRow.revenue)}`,
+      checks: [
+        '抽样打开 /api/order-journey?order_id=订单ID，确认 Shopify moments_count 是否为 0。',
+        '检查订单 landing_site、referrer、UTM 是否为空。',
+        '检查 Custom Pixel 是否在落地页和结账前正常记录 session。'
+      ],
+      fixes: [
+        '保证所有广告、KOL、邮件、AI 推荐链接都带 utm_source / utm_medium / utm_campaign。',
+        '确认 theme UTM snippet 已安装并能把 UTM 写入 cart attributes。',
+        '对高金额 No Conversion Details 订单做人工抽样，必要时补充渠道映射规则。'
+      ]
+    });
+  }
+
+  if (otherRow && otherRow.revenue >= 500) {
+    diagnostics.push({
+      severity: 'medium',
+      title: 'Other 渠道金额较高',
+      impact: 'Other 说明来源识别不够细，可能把真实增长渠道藏起来。',
+      evidence: `${otherRow.orders}单 / ${shortMoney(otherRow.revenue)}`,
+      checks: [
+        '抽查 Other 订单的 raw_data.source_name、referring_site、first/last touch sourceDescription。',
+        '查看 referrer 是否来自论坛、联盟、AI、支付跳转或内部应用。',
+        '检查 UTM source 是否有新写法未被 classifyChannel 覆盖。'
+      ],
+      fixes: [
+        '把确认后的来源加入 classifyChannel / normalizeChannelName 映射。',
+        '对外部推广链接统一 UTM 命名，减少 Other。',
+        '把内部应用和支付回跳来源排除为 Direct/Internal App。'
+      ]
+    });
+  }
+
+  if (topFalling && Math.abs(topFalling.revenue_change) >= 100) {
+    const checks = topFalling.sessions_change < 0
+      ? [
+          '检查该渠道广告/内容入口是否暂停、预算是否耗尽。',
+          '检查 SEO 排名、外链、referrer 来源是否下降。',
+          '检查 UTM 是否丢失导致订单被分到 Other/Direct。'
+        ]
+      : [
+          'Sessions 未明显下降时，重点检查落地页转化、价格、库存、优惠和 checkout。',
+          '抽查该渠道最近 5 单和未成交商品页，确认是否集中在某个 SKU。',
+          '检查 AOV 是否下降，是否低价 SKU 或折扣占比上升。'
+        ];
+
+    diagnostics.push({
+      severity: 'high',
+      title: `${topFalling.channel} 销售额下降`,
+      impact: '这是本期最主要的下滑来源，需要优先排查入口流量或转化链路。',
+      evidence: `${signedMoney(topFalling.revenue_change)}，订单变化 ${signedNumber(topFalling.orders - topFalling.previous_orders)} 单，Sessions 变化 ${signedNumber(topFalling.sessions_change || 0)}`,
+      checks,
+      fixes: [
+        '先按订单明细确认下滑 SKU 和落地页，再决定调预算或改页面。',
+        '如果是流量下降，恢复入口；如果是转化下降，优先修库存、价格、优惠和 checkout。',
+        '修复后对比该渠道 24h Sessions、订单数和 AOV。'
+      ]
+    });
+  }
+
+  if (!diagnostics.length) {
+    diagnostics.push({
+      severity: 'info',
+      title: '暂无高优先级异常',
+      impact: '当前主要指标没有出现需要立即处理的异常。',
+      evidence: `本期销售额 ${shortMoney(currentDataset.totals.revenue)}，订单 ${currentDataset.totals.orders} 单。`,
+      checks: [
+        '继续观察 Top 10 渠道的订单数、AOV、ROAS 和 Sessions。',
+        '重点关注付费渠道花费是否持续同步。',
+        '每日检查 No Conversion Details 和 Other 是否异常增加。'
+      ],
+      fixes: [
+        '保持自动归因回填和广告花费同步。',
+        '新增推广渠道时同步更新 UTM 和渠道映射。'
+      ]
+    });
+  }
+
+  return diagnostics.slice(0, 6);
+}
+
 function buildAttributionNarrative(currentDataset, previousDataset, mergedRows, limit) {
   const revenueChange = calcChange(currentDataset.totals.revenue, previousDataset.totals.revenue);
   const ordersChange = calcChange(currentDataset.totals.orders, previousDataset.totals.orders);
@@ -2620,6 +2731,16 @@ function buildAttributionNarrative(currentDataset, previousDataset, mergedRows, 
     actions.push(`No Conversion Details 有 ${noConversionRow.orders} 单 / ${shortMoney(noConversionRow.revenue)}，Shopify 未提供转化路径；建议抽查这些订单的 UTM、referrer、landing page 和 Pixel 会话链路。`);
   }
 
+  const diagnostics = buildAnalysisDiagnostics(
+    currentDataset,
+    previousDataset,
+    mergedRows,
+    rising,
+    falling,
+    paidNoSpend,
+    noConversionRow
+  );
+
   if (!actions.length) {
     actions.push('当前没有明显异常，建议继续观察 Top 10 渠道的订单数、AOV、ROAS 和 Sessions 变化。');
   }
@@ -2630,6 +2751,7 @@ function buildAttributionNarrative(currentDataset, previousDataset, mergedRows, 
     summary: `本期销售额 ${shortMoney(currentDataset.totals.revenue)}，较上期 ${signedMoney(revenueChange.delta)}（${signedPct(revenueChange.pct)}）；订单 ${currentDataset.totals.orders} 单，较上期 ${signedNumber(ordersChange.delta)} 单；广告花费 ${shortMoney(currentDataset.totals.spend)}，较上期 ${signedMoney(spendChange.delta)}。主要上涨：${topRisingText}。主要下降：${topFallingText}。`,
     rising_channels: rising,
     falling_channels: falling,
+    diagnostics,
     actions: actions.slice(0, 6),
     notes: [
       `渠道列表只返回 Top ${limit}`,
@@ -2931,6 +3053,34 @@ async function queryAgenticAcquiredCustomers(env, agenticOrders) {
 }
 
 async function queryAgenticCatalogLogs(env, startDate, endDate) {
+  const rowsByKey = {};
+
+  function addCatalogRow(row) {
+    const agentName = row.agent_name || 'AI Agent';
+    const sku = row.sku || '';
+    const productId = row.product_id || '';
+    const productTitle = row.product_title || '';
+    const key = [agentName, sku, productId, productTitle].join('|');
+
+    if (!rowsByKey[key]) {
+      rowsByKey[key] = {
+        agent_name: agentName,
+        sku,
+        product_id: productId,
+        product_title: productTitle,
+        requests: 0,
+        last_requested_at: row.last_requested_at || '',
+        source: row.source || 'catalog_api_log'
+      };
+    }
+
+    rowsByKey[key].requests += safeNumber(row.requests || 0);
+
+    if (row.last_requested_at && row.last_requested_at > rowsByKey[key].last_requested_at) {
+      rowsByKey[key].last_requested_at = row.last_requested_at;
+    }
+  }
+
   try {
     const rows = await env.DB.prepare(
       `SELECT
@@ -2948,10 +3098,60 @@ async function queryAgenticCatalogLogs(env, startDate, endDate) {
        LIMIT 10`
     ).bind(startDate, endDate).all();
 
-    return rows.results || [];
+    (rows.results || []).forEach((row) => {
+      addCatalogRow({
+        ...row,
+        source: 'catalog_api_log'
+      });
+    });
   } catch (err) {
-    return [];
   }
+
+  try {
+    const pixelRows = await env.DB.prepare(
+      `SELECT
+        COALESCE(utm_source, '') as source,
+        COALESCE(utm_campaign, '') as campaign,
+        COALESCE(referrer, '') as referrer,
+        COALESCE(product_id, '') as product_id,
+        COALESCE(product_title, '') as product_title,
+        COUNT(*) as requests,
+        MAX(timestamp) as last_requested_at
+       FROM pixel_events
+       WHERE event_name IN ('product_viewed', 'product_added_to_cart')
+         AND DATE(timestamp) >= ?
+         AND DATE(timestamp) <= ?
+         AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '')
+       GROUP BY source, campaign, referrer, product_id, product_title
+       ORDER BY requests DESC
+       LIMIT 500`
+    ).bind(startDate, endDate).all();
+
+    (pixelRows.results || []).forEach((row) => {
+      const rowText = [
+        row.source,
+        row.campaign,
+        row.referrer
+      ].join(' ');
+
+      if (!hasAgenticText(rowText)) return;
+
+      addCatalogRow({
+        agent_name: detectAgenticPlatformFromText(rowText),
+        sku: '',
+        product_id: row.product_id || '',
+        product_title: row.product_title || '',
+        requests: safeNumber(row.requests || 0),
+        last_requested_at: row.last_requested_at || '',
+        source: 'pixel_product_event'
+      });
+    });
+  } catch (err) {
+  }
+
+  return Object.values(rowsByKey)
+    .sort((a, b) => b.requests - a.requests || String(b.last_requested_at || '').localeCompare(String(a.last_requested_at || '')))
+    .slice(0, 10);
 }
 
 async function buildAgenticSummary(env, rangeWindow) {
@@ -3356,8 +3556,18 @@ async function handleFeishuSync(request, env, cors) {
       summary: '暂无 AI 数据分析总结。',
       rising_channels: [],
       falling_channels: [],
+      diagnostics: [],
       actions: []
     };
+
+    let agentic = null;
+    let agenticError = null;
+
+    try {
+      agentic = await buildAgenticSummary(env, rangeWindow);
+    } catch (err) {
+      agenticError = err && err.message ? err.message : String(err);
+    }
 
     const reasonMap = {};
 
@@ -3419,6 +3629,49 @@ async function handleFeishuSync(request, env, cors) {
     const actionText = (ai.actions || []).length
       ? (ai.actions || []).slice(0, 6).map((item) => `- ${feishuEsc(item)}`).join('\n')
       : '- 暂无明确行动建议，继续观察 Top 10 渠道变化';
+
+    const diagnosticText = (ai.diagnostics || []).length
+      ? (ai.diagnostics || []).slice(0, 5).map((item, index) => {
+          const checks = (item.checks || []).slice(0, 3).map((row) => `排查：${row}`).join('\n');
+          const fixes = (item.fixes || []).slice(0, 3).map((row) => `修复：${row}`).join('\n');
+
+          return [
+            `${index + 1}. **[${feishuEsc(item.severity || 'info')}] ${feishuEsc(item.title || '诊断项')}**`,
+            `影响：${feishuEsc(item.impact || '-')}`,
+            `证据：${feishuEsc(item.evidence || '-')}`,
+            feishuEsc(checks || '排查：-'),
+            feishuEsc(fixes || '修复：-')
+          ].join('\n');
+        }).join('\n\n')
+      : '暂无高优先级异常';
+
+    const agenticPlatformText = agentic && (agentic.platforms || []).length
+      ? (agentic.platforms || []).slice(0, 5).map((row, index) => {
+          return `${index + 1}. ${feishuEsc(row.platform || 'AI Agent')}：${row.orders || 0}单 / ${feishuMoney(row.revenue || 0)} / Sessions ${row.sessions || 0}`;
+        }).join('\n')
+      : '暂无 AI Agent 平台数据';
+
+    const agenticOrderText = agentic && (agentic.orders || []).length
+      ? (agentic.orders || []).slice(0, 5).map((row, index) => {
+          return `${index + 1}. ${feishuEsc(row.order_name || row.order_id || '-')} / ${feishuEsc(row.platform || 'AI Agent')} / ${feishuMoney(row.total_price || 0)}`;
+        }).join('\n')
+      : '暂无 AI 渠道订单';
+
+    const catalogText = agentic && (agentic.catalog_logs || []).length
+      ? (agentic.catalog_logs || []).slice(0, 5).map((row, index) => {
+          const product = row.sku || row.product_title || row.product_id || '-';
+          return `${index + 1}. ${feishuEsc(row.agent_name || 'AI Agent')} / ${feishuEsc(product)} / ${row.requests || 0}次`;
+        }).join('\n')
+      : '暂无 Catalog API logs；当前会用 AI 来源商品浏览作为 fallback，真实 SKU 级 logs 需要后续接商品/catalog API 写入。';
+
+    const agenticText = agentic
+      ? [
+          `AI 订单：**${agentic.kpi?.orders || 0} 单** / 销售额 **${feishuMoney(agentic.kpi?.revenue || 0)}** / Sessions **${agentic.kpi?.sessions || 0}** / AOV **${feishuMoney(agentic.kpi?.aov || 0)}**`,
+          `**平台表现**\n${agenticPlatformText}`,
+          `**AI 订单清单**\n${agenticOrderText}`,
+          `**Catalog / SKU 访问**\n${catalogText}`
+        ].join('\n\n')
+      : `Shopify 智能体总结生成失败：${feishuEsc(agenticError || 'unknown_error')}`;
 
     const alerts = [];
 
@@ -3535,6 +3788,13 @@ async function handleFeishuSync(request, env, cors) {
             tag: 'div',
             text: {
               tag: 'lark_md',
+              content: `**问题诊断与修复排查**\n${diagnosticText}`
+            }
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
               content: `**上涨渠道原因**\n${risingText}`
             }
           },
@@ -3550,6 +3810,16 @@ async function handleFeishuSync(request, env, cors) {
             text: {
               tag: 'lark_md',
               content: `**行动建议**\n${actionText}`
+            }
+          },
+          {
+            tag: 'hr'
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**Shopify 智能体渠道总结**\n${agenticText}`
             }
           },
           {

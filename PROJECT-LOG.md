@@ -293,3 +293,34 @@
 - `npx wrangler deploy` 成功，Worker Version ID: `89ce8c62-cac7-4b37-8330-7b8eb018eef9`。
 - 线上 `/api/dashboard?range=7d` 正常返回，`No Conversion Details` 行动建议已改为检查 UTM/referrer/landing page/Pixel 会话链路。
 - 线上 `/api/agentic-summary?range=7d` 仍正常返回 AI 智能体订单数据：3 单，销售额 `$807.03`。
+
+### 优化 Catalog logs、AI 诊断和飞书日报
+
+修改文件：
+- `src/worker.js`
+- `app.js`
+- `index.html`
+- `PROJECT-LOG.md`
+
+原因：
+- 看板的 `Catalog API logs · SKU + Agent` 为空，因为 `agent_catalog_logs` 目前只有表结构，没有商品/catalog API 写入来源。
+- AI 数据分析总结偏概览，没有明确指出问题、影响、证据、排查方式和修复动作。
+- 用户要求这些诊断内容和 Shopify 智能体总结同步推送到飞书。
+
+内容：
+- `queryAgenticCatalogLogs()` 增加 fallback：当 `agent_catalog_logs` 没有数据时，从现有 `pixel_events` 的 AI 来源商品浏览/加购事件聚合 `agent_name / product_id / product_title / requests`，先展示 “AI Agent 看了哪些 Product”。
+- AI 分析新增 `diagnostics` 结构化诊断项，包含 `severity`、`title`、`impact`、`evidence`、`checks`、`fixes`。
+- 前端 `AI 数据分析总结` 新增 “问题诊断与修复排查” 卡片，展示影响、证据、排查、修复。
+- 飞书日报新增 “问题诊断与修复排查” 和 “Shopify 智能体渠道总结”，同时推送 AI 平台表现、AI 订单清单和 Catalog/SKU 访问摘要。
+
+验证：
+- `node --check src/worker.js` 通过。
+- `node --check app.js` 通过。
+- `git diff --check` 通过，只有 CRLF 提示。
+- `npx wrangler deploy` 成功，Worker Version ID: `3a757ec3-58c8-4052-a2e4-6061a67e8eb8`。
+- 线上 `/api/agentic-summary?range=7d` 已返回 Catalog fallback：`catalog_log_count = 61`，Top 商品包含 ChatGPT 访问 `Thermal Master P1 Repair Master` 27 次、`NV300 MAX` 13 次。
+- 线上 `/api/dashboard?range=7d` 已返回 `diagnostics`，包含付费渠道花费缺失、No Conversion Details、Other 渠道金额较高、Brave Organic 下滑等诊断。
+- 手动触发 `/api/feishu-sync?date=2026-05-29` 因缺少 `Authorization: Bearer API_WRITE_TOKEN` 返回 `Unauthorized`；自动定时飞书日报会使用新卡片，手动推送需要带写入 token。
+
+未解决事项：
+- fallback 只能展示 Pixel 捕获到的 AI 来源商品事件，SKU 字段仍可能为空；真实 SKU 级 Catalog API logs 仍需要后续在商品/catalog API 访问入口写入 `agent_catalog_logs`。

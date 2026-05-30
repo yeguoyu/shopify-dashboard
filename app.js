@@ -537,6 +537,7 @@ function renderAIAnalysis(analysis) {
 
   if (!summary) {
     if (summaryEl) summaryEl.textContent = '暂无 AI 分析数据。请确认 Worker 已部署 /api/ai-analysis 或 /api/dashboard analysis 字段。';
+    renderDiagnosticList([]);
     renderTrendList('aiRisingList', [], 'up');
     renderTrendList('aiFallingList', [], 'down');
     renderActionList([]);
@@ -552,9 +553,39 @@ function renderAIAnalysis(analysis) {
     modelEl.textContent = modelText.replace(/_/g, ' ') + ' · Top 10';
   }
 
+  renderDiagnosticList(summary.diagnostics || []);
   renderTrendList('aiRisingList', summary.rising_channels || [], 'up');
   renderTrendList('aiFallingList', summary.falling_channels || [], 'down');
   renderActionList(summary.actions || []);
+}
+
+function renderDiagnosticList(rows) {
+  var container = document.getElementById('aiDiagnosticList');
+  if (!container) return;
+
+  var list = (rows || []).slice(0, 6);
+
+  if (!list.length) {
+    container.innerHTML = '<div class="analysis-empty">暂无高优先级异常</div>';
+    return;
+  }
+
+  container.innerHTML = list.map(function (item) {
+    var severity = String(item.severity || 'info').toLowerCase();
+    var checks = (item.checks || []).slice(0, 3).join('；');
+    var fixes = (item.fixes || []).slice(0, 3).join('；');
+
+    return '<div class="diagnostic-card">' +
+      '<div class="diagnostic-head">' +
+      '<div class="diagnostic-title">' + escHtml(item.title || '诊断项') + '</div>' +
+      '<div class="diagnostic-severity ' + escHtml(severity) + '">' + escHtml(severity) + '</div>' +
+      '</div>' +
+      '<div class="diagnostic-line"><strong>影响：</strong>' + escHtml(item.impact || '-') + '</div>' +
+      '<div class="diagnostic-line"><strong>证据：</strong>' + escHtml(item.evidence || '-') + '</div>' +
+      '<div class="diagnostic-line"><strong>排查：</strong>' + escHtml(checks || '-') + '</div>' +
+      '<div class="diagnostic-line"><strong>修复：</strong>' + escHtml(fixes || '-') + '</div>' +
+      '</div>';
+  }).join('');
 }
 
 function renderTrendList(containerId, rows, type) {
