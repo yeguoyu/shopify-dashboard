@@ -274,3 +274,22 @@
 
 未解决事项：
 - `Catalog -> API logs` 仍没有写入来源，`catalog_logs` 为空；后续需要接入商品/catalog API 访问日志。
+
+### 修正 No Conversion Details 行动建议
+
+修改文件：
+- `src/worker.js`
+- `PROJECT-LOG.md`
+
+原因：
+- Shopify 订单归因回填完成后，Pending 已清零；此时 `No Conversion Details` 代表 Shopify 官方未提供转化路径，继续执行 `/api/backfill-attribution` 不会改善结果。
+
+内容：
+- 主看板 AI 建议和飞书提醒中，`No Conversion Details` 的建议从“继续执行 backfill”改为“抽查 UTM、referrer、landing page 和 Pixel 会话链路”。
+
+验证：
+- `node --check src/worker.js` 通过。
+- `git diff --check` 通过，只有 CRLF 提示。
+- `npx wrangler deploy` 成功，Worker Version ID: `89ce8c62-cac7-4b37-8330-7b8eb018eef9`。
+- 线上 `/api/dashboard?range=7d` 正常返回，`No Conversion Details` 行动建议已改为检查 UTM/referrer/landing page/Pixel 会话链路。
+- 线上 `/api/agentic-summary?range=7d` 仍正常返回 AI 智能体订单数据：3 单，销售额 `$807.03`。

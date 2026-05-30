@@ -2617,7 +2617,7 @@ function buildAttributionNarrative(currentDataset, previousDataset, mergedRows, 
 
   const noConversionRow = mergedRows.find((row) => row.channel === 'No Conversion Details');
   if (noConversionRow && noConversionRow.orders > 0) {
-    actions.push(`No Conversion Details 有 ${noConversionRow.orders} 单 / ${shortMoney(noConversionRow.revenue)}，建议继续执行 /api/backfill-attribution 补齐 Shopify customerJourney。`);
+    actions.push(`No Conversion Details 有 ${noConversionRow.orders} 单 / ${shortMoney(noConversionRow.revenue)}，Shopify 未提供转化路径；建议抽查这些订单的 UTM、referrer、landing page 和 Pixel 会话链路。`);
   }
 
   if (!actions.length) {
@@ -3450,7 +3450,7 @@ async function handleFeishuSync(request, env, cors) {
     const noConversionRow = topChannels.find((row) => row.channel === 'No Conversion Details');
 
     if (noConversionRow && noConversionRow.orders > 0) {
-      alerts.push(`No Conversion Details：${noConversionRow.orders}单 / ${feishuMoney(noConversionRow.revenue)}，建议继续执行 /api/backfill-attribution。`);
+      alerts.push(`No Conversion Details：${noConversionRow.orders}单 / ${feishuMoney(noConversionRow.revenue)}，Shopify 未提供转化路径，建议抽查 UTM、referrer、landing page 和 Pixel 会话链路。`);
     }
 
     const otherRow = topChannels.find((row) => row.channel === 'Other');
