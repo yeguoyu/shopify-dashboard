@@ -56,8 +56,26 @@ export default {
       if (path === '/api/attribution-anomalies' && request.method === 'GET')
         return handleAttributionAnomalies(request, env, corsHeaders);
 
+      if (path === '/api/attribution-anomalies/status' && request.method === 'POST')
+        return handleAttributionAnomalyStatus(request, env, corsHeaders);
+
+      if (path === '/api/attribution-rules' && request.method === 'GET')
+        return handleAttributionRules(request, env, corsHeaders);
+
+      if (path === '/api/attribution-rules' && request.method === 'POST')
+        return handleAttributionRuleUpsert(request, env, corsHeaders);
+
+      if (path === '/api/attribution-rules/apply' && request.method === 'POST')
+        return handleApplyAttributionRules(request, env, corsHeaders);
+
+      if (path === '/api/order-diagnostics' && request.method === 'GET')
+        return handleOrderDiagnostics(request, env, corsHeaders);
+
       if (path === '/api/product-performance' && request.method === 'GET')
         return handleProductPerformance(request, env, corsHeaders);
+
+      if (path === '/api/product-catalog/backfill' && request.method === 'POST')
+        return handleProductCatalogBackfill(request, env, corsHeaders);
 
       if (path === '/api/order-journey' && request.method === 'GET')
       return handleOrderJourney(request, env, corsHeaders);
@@ -315,6 +333,35 @@ function normalizeProductKey(sku, title, productId) {
   return '';
 }
 
+function buildProductCatalogKey(item) {
+  const productId = String(item.product_id || '').trim().toLowerCase();
+  const variantId = String(item.variant_id || '').trim().toLowerCase();
+  const sku = String(item.sku || '').trim().toLowerCase();
+  const title = String(item.product_title || item.title || '').trim().toLowerCase();
+
+  if (productId && variantId) return `product:${productId}|variant:${variantId}`;
+  if (variantId) return `variant:${variantId}`;
+  if (productId && sku) return `product:${productId}|sku:${sku}`;
+  if (productId) return `product:${productId}`;
+  if (sku) return `sku:${sku}`;
+  if (title) return `title:${title}`;
+
+  return '';
+}
+
+function normalizeStatus(value, fallback = 'open') {
+  const status = String(value || '').trim().toLowerCase();
+  const allowed = ['open', 'reviewing', 'resolved', 'ignored'];
+
+  return allowed.includes(status) ? status : fallback;
+}
+
+function normalizeRuleStatus(value) {
+  const status = String(value || 'ACTIVE').trim().toUpperCase();
+
+  return ['ACTIVE', 'PAUSED'].includes(status) ? status : 'ACTIVE';
+}
+
 async function tableHasColumn(env, tableName, columnName) {
   try {
     const rows = await env.DB.prepare(`PRAGMA table_info(${tableName})`).all();
@@ -322,6 +369,51 @@ async function tableHasColumn(env, tableName, columnName) {
     return (rows.results || []).some((row) => row.name === columnName);
   } catch (err) {
     return false;
+  }
+}
+
+async function upsertProductCatalogItems(env, items, source = 'unknown') {
+  const cleanItems = (items || [])
+    .map((item) => ({
+      catalog_key: buildProductCatalogKey(item),
+      product_id: String(item.product_id || '').trim(),
+      variant_id: String(item.variant_id || '').trim(),
+      sku: String(item.sku || '').trim(),
+      product_title: String(item.product_title || item.title || '').trim(),
+      raw_data: item.raw_data || item
+    }))
+    .filter((item) => item.catalog_key);
+
+  for (const item of cleanItems.slice(0, 100)) {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO product_catalog (
+          catalog_key, product_id, variant_id, sku, product_title, source, raw_data, first_seen_at, last_seen_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(catalog_key) DO UPDATE SET
+          product_title = COALESCE(NULLIF(excluded.product_title, ''), product_catalog.product_title),
+          product_id = COALESCE(NULLIF(excluded.product_id, ''), product_catalog.product_id),
+          variant_id = COALESCE(NULLIF(excluded.variant_id, ''), product_catalog.variant_id),
+          sku = COALESCE(NULLIF(excluded.sku, ''), product_catalog.sku),
+          source = excluded.source,
+          raw_data = excluded.raw_data,
+          last_seen_at = datetime('now')`
+      )
+        .bind(
+          item.catalog_key,
+          item.product_id,
+          item.variant_id,
+          item.sku,
+          item.product_title,
+          source,
+          JSON.stringify(item.raw_data || {})
+        )
+        .run();
+    } catch (err) {
+      if (!String(err.message || '').includes('product_catalog')) {
+        console.warn('Product catalog upsert failed:', err.message);
+      }
+    }
   }
 }
 
@@ -464,6 +556,14 @@ async function buildSyncHealth(env, rangeWindow) {
   ).first();
 
   const anomalies = await buildAttributionAnomalies(env, rangeWindow, 5);
+  const rangeOrders = await env.DB.prepare(
+    `SELECT
+      COUNT(*) as orders,
+      COALESCE(SUM(total_price), 0) as revenue
+     FROM orders
+     WHERE substr(shopify_created_at, 1, 10) >= ?
+       AND substr(shopify_created_at, 1, 10) <= ?`
+  ).bind(rangeWindow.start, rangeWindow.end).first();
   const productSkuEnabled = await tableHasColumn(env, 'pixel_events', 'product_sku');
   const orderLagDays = latestOrder?.latest_order_date
     ? Math.max(0, dateDiffDays(shopifyToday, latestOrder.latest_order_date))
@@ -510,11 +610,24 @@ async function buildSyncHealth(env, rangeWindow) {
     });
   }
 
+  const anomalyRevenueShare = rangeOrders?.revenue > 0
+    ? (anomalies.totals.revenue / rangeOrders.revenue) * 100
+    : 0;
+  const openAnomalies = anomalies.status_summary?.open || 0;
+
   if (anomalies.totals.orders > 0) {
     checks.push({
-      severity: 'medium',
+      severity: anomalyRevenueShare >= 20 ? 'high' : 'medium',
       title: '存在 Other / No Conversion Details',
-      detail: `${anomalies.totals.orders} 单 / ${shortMoney(anomalies.totals.revenue)} 需要抽查 UTM、referrer、landing page 和 Pixel 链路。`
+      detail: `${anomalies.totals.orders} 单 / ${shortMoney(anomalies.totals.revenue)}，占本期销售额 ${anomalyRevenueShare.toFixed(1)}%，需要抽查 UTM、referrer、landing page 和 Pixel 链路。`
+    });
+  }
+
+  if (openAnomalies > 0) {
+    checks.push({
+      severity: openAnomalies >= 10 ? 'high' : 'medium',
+      title: '归因异常仍待处理',
+      detail: `${openAnomalies} 单仍是 open 状态；可先用归因规则批量处理 AI、内部跳转、邮件、YouTube 等明确来源。`
     });
   }
 
@@ -555,6 +668,8 @@ async function buildSyncHealth(env, rangeWindow) {
     pixel_lag_days: pixelLagDays,
     pending_attribution_count: pending?.cnt || 0,
     attribution_anomalies: anomalies.totals,
+    attribution_anomaly_status: anomalies.status_summary,
+    attribution_anomaly_revenue_share: anomalyRevenueShare,
     product_sku_enabled: productSkuEnabled,
     shopify_configured: Boolean(env.SHOPIFY_STORE && env.SHOPIFY_ADMIN_TOKEN),
     feishu_configured: Boolean(env.FEISHU_WEBHOOK),
@@ -651,6 +766,20 @@ async function handlePixelEvent(request, env, cors) {
       .run();
   }
 
+  if (body.product_id || body.variant_id || body.product_sku || body.product_title) {
+    await upsertProductCatalogItems(env, [{
+      product_id: body.product_id,
+      variant_id: body.variant_id,
+      sku: body.product_sku,
+      product_title: body.product_title,
+      raw_data: {
+        event_name: body.event_name,
+        page_url: body.page_url,
+        referrer: body.referrer
+      }
+    }], 'pixel_event');
+  }
+
   return json({ ok: true }, 200, cors);
 }
 
@@ -706,6 +835,8 @@ async function handleOrderWebhook(request, env, cors) {
   const customerId = order.customer ? String(order.customer.id) : null;
   const lineItems = JSON.stringify(
     (order.line_items || []).map((li) => ({
+      product_id: li.product_id ? String(li.product_id) : '',
+      variant_id: li.variant_id ? String(li.variant_id) : '',
       title: li.title,
       quantity: li.quantity,
       price: li.price,
@@ -737,6 +868,18 @@ async function handleOrderWebhook(request, env, cors) {
       v(order.created_at)
     )
     .run();
+
+  await upsertProductCatalogItems(
+    env,
+    (order.line_items || []).map((li) => ({
+      product_id: li.product_id ? String(li.product_id) : '',
+      variant_id: li.variant_id ? String(li.variant_id) : '',
+      sku: li.sku || '',
+      product_title: li.title || '',
+      raw_data: li
+    })),
+    'shopify_webhook'
+  );
 
   // 4. 异步调 GraphQL 补充 customerJourney 归因
   // 使用 waitUntil 确保 Webhook 快速响应
@@ -2008,6 +2151,8 @@ async function upsertShopifyOrder(order, env) {
   const lineItems = JSON.stringify(
     (order.line_items || []).map(function (li) {
       return {
+        product_id: li.product_id ? String(li.product_id) : '',
+        variant_id: li.variant_id ? String(li.variant_id) : '',
         title: li.title,
         quantity: li.quantity,
         price: li.price,
@@ -2095,6 +2240,20 @@ async function upsertShopifyOrder(order, env) {
       order.created_at
     )
     .run();
+
+  await upsertProductCatalogItems(
+    env,
+    (order.line_items || []).map(function (li) {
+      return {
+        product_id: li.product_id ? String(li.product_id) : '',
+        variant_id: li.variant_id ? String(li.variant_id) : '',
+        sku: li.sku || '',
+        product_title: li.title || '',
+        raw_data: li
+      };
+    }),
+    'shopify_order'
+  );
 
   return {
     order_id: orderId,
@@ -2470,24 +2629,39 @@ function signedPct(value) {
 async function queryOrderRowsForAttribution(env, startDate, endDate) {
   const rows = await env.DB.prepare(
     `SELECT
-      order_id,
-      COALESCE(total_price, 0) as total_price,
-      COALESCE(channel, '') as channel,
-      COALESCE(first_touch_channel, '') as first_touch_channel,
-      COALESCE(last_touch_channel, '') as last_touch_channel
-     FROM orders
-     WHERE substr(shopify_created_at, 1, 10) >= ?
-       AND substr(shopify_created_at, 1, 10) <= ?`
+      o.order_id,
+      COALESCE(o.total_price, 0) as total_price,
+      COALESCE(o.channel, '') as channel,
+      COALESCE(o.first_touch_channel, '') as first_touch_channel,
+      COALESCE(o.first_touch_campaign, '') as first_touch_campaign,
+      COALESCE(o.last_touch_channel, '') as last_touch_channel,
+      COALESCE(o.last_touch_campaign, '') as last_touch_campaign,
+      COALESCE(o.utm_source, '') as utm_source,
+      COALESCE(o.utm_medium, '') as utm_medium,
+      COALESCE(o.utm_campaign, '') as utm_campaign,
+      COALESCE(o.utm_content, '') as utm_content,
+      COALESCE(o.utm_term, '') as utm_term,
+      COALESCE(o.landing_site, '') as landing_site,
+      COALESCE(o.referring_site, '') as referring_site,
+      COALESCE(json_extract(o.raw_data, '$.source_name'), '') as source_name,
+      COALESCE(ov.status, '') as override_status,
+      COALESCE(ov.override_channel, '') as override_channel,
+      COALESCE(ov.override_campaign, '') as override_campaign
+     FROM orders o
+     LEFT JOIN order_attribution_overrides ov ON ov.order_id = o.order_id
+     WHERE substr(o.shopify_created_at, 1, 10) >= ?
+       AND substr(o.shopify_created_at, 1, 10) <= ?`
   ).bind(startDate, endDate).all();
 
   return rows.results || [];
 }
 
-function aggregateOrderRowsByAttribution(rows) {
+function aggregateOrderRowsByAttribution(rows, rules = []) {
   const map = {};
 
   (rows || []).forEach((row) => {
-    const channel = getLastNonClickChannelFromOrder(row);
+    const attribution = getEffectiveAttribution(row, rules);
+    const channel = attribution.channel;
     const key = channelMapKey(channel);
 
     if (!map[key]) {
@@ -2568,7 +2742,8 @@ async function querySpendMapByChannel(env, startDate, endDate) {
 
 async function buildChannelDataset(env, startDate, endDate) {
   const orderRows = await queryOrderRowsForAttribution(env, startDate, endDate);
-  const orderMap = aggregateOrderRowsByAttribution(orderRows);
+  const rules = await getActiveAttributionRules(env);
+  const orderMap = aggregateOrderRowsByAttribution(orderRows, rules);
   const sessionMap = await querySessionMapByChannel(env, startDate, endDate);
   const spendMap = await querySpendMapByChannel(env, startDate, endDate);
 
@@ -3504,6 +3679,402 @@ async function handleAgenticSummary(request, env, cors) {
 // Attribution Anomalies
 // ============================================
 
+// ============================================
+// Attribution Rules / Manual Overrides
+// ============================================
+
+async function getActiveAttributionRules(env) {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT
+        id,
+        name,
+        priority,
+        match_field,
+        match_type,
+        pattern,
+        target_channel,
+        target_campaign,
+        status,
+        notes
+       FROM attribution_rules
+       WHERE status = 'ACTIVE'
+       ORDER BY priority ASC, id ASC`
+    ).all();
+
+    return rows.results || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function getAttributionSourceFields(row) {
+  return [
+    row.channel,
+    row.first_touch_channel,
+    row.first_touch_campaign,
+    row.last_touch_channel,
+    row.last_touch_campaign,
+    row.utm_source,
+    row.utm_medium,
+    row.utm_campaign,
+    row.utm_content,
+    row.utm_term,
+    row.landing_site,
+    row.referring_site,
+    row.source_name
+  ];
+}
+
+function getAttributionSourceText(row) {
+  return getAttributionSourceFields(row).join(' ');
+}
+
+function getAttributionRuleFieldValue(row, field) {
+  const key = String(field || 'all').toLowerCase();
+  const allValues = getAttributionSourceFields(row);
+
+  if (key === 'all' || key === 'source_text') {
+    return allValues.join(' ');
+  }
+
+  const map = {
+    channel: row.channel,
+    first_touch_channel: row.first_touch_channel,
+    first_touch_campaign: row.first_touch_campaign,
+    last_touch_channel: row.last_touch_channel,
+    last_touch_campaign: row.last_touch_campaign,
+    utm_source: row.utm_source,
+    utm_medium: row.utm_medium,
+    utm_campaign: row.utm_campaign,
+    landing_site: row.landing_site,
+    referring_site: row.referring_site,
+    source_name: row.source_name
+  };
+
+  return map[key] || '';
+}
+
+function attributionRuleMatches(row, rule) {
+  const value = String(getAttributionRuleFieldValue(row, rule.match_field) || '').toLowerCase();
+  const pattern = String(rule.pattern || '').toLowerCase().trim();
+  const type = String(rule.match_type || 'contains').toLowerCase();
+
+  if (!pattern || !value) return false;
+
+  if (type === 'exact') return value === pattern;
+  if (type === 'starts_with') return value.startsWith(pattern);
+  if (type === 'contains_any') {
+    return pattern.split('|').some((part) => {
+      const p = part.trim();
+      return p && value.includes(p);
+    });
+  }
+
+  if (type === 'regex') {
+    try {
+      return new RegExp(pattern, 'i').test(value);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  return value.includes(pattern);
+}
+
+function findAttributionRuleMatch(row, rules) {
+  for (const rule of rules || []) {
+    if (attributionRuleMatches(row, rule)) return rule;
+  }
+
+  return null;
+}
+
+function shouldApplyAttributionRule(row, rule, baseChannel) {
+  const rawChannels = [
+    row.channel,
+    row.first_touch_channel,
+    row.last_touch_channel,
+    baseChannel
+  ];
+  const hasWeakAttribution = rawChannels.some((channel) => {
+    return isWeakAttributionChannel(channel) || isAttributionAnomalyValue(channel);
+  });
+  const targetChannel = normalizeChannelName(rule?.target_channel || '');
+
+  if (hasWeakAttribution) return true;
+
+  return targetChannel === 'AI Referral' && hasAgenticText(getAttributionSourceText(row));
+}
+
+function getManualOverrideChannel(row) {
+  const raw = String(row.override_channel || '').trim();
+
+  return raw ? normalizeChannelName(raw) : '';
+}
+
+function getEffectiveAttribution(row, rules) {
+  const overrideChannel = getManualOverrideChannel(row);
+
+  if (overrideChannel) {
+    return {
+      channel: overrideChannel,
+      campaign: row.override_campaign || '',
+      source: 'manual_override',
+      status: row.override_status || row.handling_status || 'resolved',
+      rule: null
+    };
+  }
+
+  const baseChannel = getLastNonClickChannelFromOrder(row);
+  const rule = findAttributionRuleMatch(row, rules);
+
+  if (rule && shouldApplyAttributionRule(row, rule, baseChannel)) {
+    return {
+      channel: normalizeChannelName(rule.target_channel || 'Other'),
+      campaign: rule.target_campaign || '',
+      source: 'rule',
+      status: row.override_status || row.handling_status || 'open',
+      rule: {
+        id: rule.id,
+        name: rule.name,
+        target_channel: normalizeChannelName(rule.target_channel || 'Other'),
+        target_campaign: rule.target_campaign || '',
+        priority: rule.priority
+      }
+    };
+  }
+
+  return {
+    channel: baseChannel,
+    campaign: row.last_touch_campaign || row.first_touch_campaign || row.utm_campaign || '',
+    source: 'shopify',
+    status: row.override_status || row.handling_status || 'open',
+    rule: null
+  };
+}
+
+async function fetchAttributionRules(env, includeInactive = false) {
+  const sql = includeInactive
+    ? `SELECT * FROM attribution_rules ORDER BY status ASC, priority ASC, id ASC`
+    : `SELECT * FROM attribution_rules WHERE status = 'ACTIVE' ORDER BY priority ASC, id ASC`;
+
+  try {
+    const rows = await env.DB.prepare(sql).all();
+    return rows.results || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+async function handleAttributionRules(request, env, cors) {
+  const url = new URL(request.url);
+  const includeInactive = url.searchParams.get('include_inactive') === '1';
+  const rules = await fetchAttributionRules(env, includeInactive);
+
+  return json({ rules }, 200, cors);
+}
+
+async function handleAttributionRuleUpsert(request, env, cors) {
+  if (!hasWriteAccess(request, env)) {
+    return json({ error: 'Unauthorized' }, 401, cors);
+  }
+
+  const body = await request.json();
+  const name = String(body.name || '').trim();
+  const pattern = String(body.pattern || '').trim();
+  const targetChannel = normalizeChannelName(body.target_channel || '');
+
+  if (!name || !pattern || !targetChannel) {
+    return json({ error: 'name, pattern and target_channel are required' }, 400, cors);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO attribution_rules (
+      name, priority, match_field, match_type, pattern, target_channel, target_campaign, status, notes, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(name) DO UPDATE SET
+      priority = excluded.priority,
+      match_field = excluded.match_field,
+      match_type = excluded.match_type,
+      pattern = excluded.pattern,
+      target_channel = excluded.target_channel,
+      target_campaign = excluded.target_campaign,
+      status = excluded.status,
+      notes = excluded.notes,
+      updated_at = datetime('now')`
+  )
+    .bind(
+      name,
+      Number(body.priority || 100),
+      body.match_field || 'all',
+      body.match_type || 'contains',
+      pattern,
+      targetChannel,
+      body.target_campaign || '',
+      normalizeRuleStatus(body.status),
+      body.notes || ''
+    )
+    .run();
+
+  return json({ ok: true, name }, 200, cors);
+}
+
+async function upsertOrderAttributionOverride(env, payload) {
+  const orderId = String(payload.order_id || '').trim();
+
+  if (!orderId) {
+    throw new Error('order_id is required');
+  }
+
+  const status = normalizeStatus(payload.status || (payload.override_channel ? 'resolved' : 'reviewing'));
+  const overrideChannel = payload.override_channel ? normalizeChannelName(payload.override_channel) : '';
+
+  await env.DB.prepare(
+    `INSERT INTO order_attribution_overrides (
+      order_id, status, override_channel, override_campaign, reason, note, rule_id, updated_by, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(order_id) DO UPDATE SET
+      status = excluded.status,
+      override_channel = excluded.override_channel,
+      override_campaign = excluded.override_campaign,
+      reason = excluded.reason,
+      note = excluded.note,
+      rule_id = excluded.rule_id,
+      updated_by = excluded.updated_by,
+      updated_at = datetime('now')`
+  )
+    .bind(
+      orderId,
+      status,
+      overrideChannel,
+      payload.override_campaign || '',
+      payload.reason || '',
+      payload.note || '',
+      payload.rule_id || null,
+      payload.updated_by || 'dashboard'
+    )
+    .run();
+
+  return {
+    order_id: orderId,
+    status,
+    override_channel: overrideChannel,
+    override_campaign: payload.override_campaign || ''
+  };
+}
+
+async function handleAttributionAnomalyStatus(request, env, cors) {
+  if (!hasWriteAccess(request, env)) {
+    return json({ error: 'Unauthorized' }, 401, cors);
+  }
+
+  const body = await request.json();
+  const result = await upsertOrderAttributionOverride(env, body);
+
+  return json({ ok: true, override: result }, 200, cors);
+}
+
+async function queryOrdersForAttributionCleanup(env, startDate, endDate) {
+  const rows = await env.DB.prepare(
+    `SELECT
+      o.order_id,
+      o.order_name,
+      o.shopify_created_at,
+      o.total_price,
+      o.channel,
+      o.first_touch_channel,
+      o.first_touch_campaign,
+      o.last_touch_channel,
+      o.last_touch_campaign,
+      o.utm_source,
+      o.utm_medium,
+      o.utm_campaign,
+      o.utm_content,
+      o.utm_term,
+      o.landing_site,
+      o.referring_site,
+      COALESCE(json_extract(o.raw_data, '$.source_name'), '') as source_name,
+      COALESCE(ov.status, 'open') as override_status,
+      COALESCE(ov.override_channel, '') as override_channel,
+      COALESCE(ov.override_campaign, '') as override_campaign,
+      COALESCE(ov.reason, '') as override_reason,
+      COALESCE(ov.note, '') as override_note,
+      ov.rule_id as override_rule_id
+     FROM orders o
+     LEFT JOIN order_attribution_overrides ov ON ov.order_id = o.order_id
+     WHERE substr(o.shopify_created_at, 1, 10) >= ?
+       AND substr(o.shopify_created_at, 1, 10) <= ?
+     ORDER BY COALESCE(o.total_price, 0) DESC
+     LIMIT 5000`
+  ).bind(startDate, endDate).all();
+
+  return rows.results || [];
+}
+
+async function handleApplyAttributionRules(request, env, cors) {
+  if (!hasWriteAccess(request, env)) {
+    return json({ error: 'Unauthorized' }, 401, cors);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const url = new URL(request.url);
+  const rangeWindow = getRangeWindow(url);
+  const start = isValidDateStr(body.start) ? body.start : rangeWindow.start;
+  const end = isValidDateStr(body.end) ? body.end : rangeWindow.end;
+  const dryRun = body.dry_run === true || url.searchParams.get('dry_run') === '1';
+  const limit = Math.min(Number(body.limit || 500), 1000);
+  const rules = await getActiveAttributionRules(env);
+  const rows = await queryOrdersForAttributionCleanup(env, start, end);
+  const applied = [];
+
+  for (const row of rows) {
+    if (applied.length >= limit) break;
+    if (row.override_channel) continue;
+
+    const bucket = getAttributionAnomalyBucket(row);
+    const rule = findAttributionRuleMatch(row, rules);
+
+    if (!rule || bucket === 'unknown') continue;
+
+    const item = {
+      order_id: row.order_id,
+      order_name: row.order_name,
+      total_price: safeNumber(row.total_price),
+      from_channel: getLastNonClickChannelFromOrder(row),
+      target_channel: normalizeChannelName(rule.target_channel || 'Other'),
+      target_campaign: rule.target_campaign || '',
+      rule_id: rule.id,
+      rule_name: rule.name
+    };
+
+    applied.push(item);
+
+    if (!dryRun) {
+      await upsertOrderAttributionOverride(env, {
+        order_id: row.order_id,
+        status: 'resolved',
+        override_channel: item.target_channel,
+        override_campaign: item.target_campaign,
+        reason: 'matched_rule:' + rule.name,
+        note: 'Applied by /api/attribution-rules/apply',
+        rule_id: rule.id,
+        updated_by: 'rule_apply'
+      });
+    }
+  }
+
+  return json({
+    ok: true,
+    dry_run: dryRun,
+    start,
+    end,
+    rules_count: rules.length,
+    matched_count: applied.length,
+    samples: applied.slice(0, 25)
+  }, 200, cors);
+}
+
 function isAttributionAnomalyValue(value) {
   const normalized = normalizeChannelName(value || '').toLowerCase();
 
@@ -3558,7 +4129,7 @@ function isInternalReferral(value) {
   );
 }
 
-function diagnoseAttributionAnomaly(row) {
+function buildAttributionDiagnosis(row) {
   const bucket = getAttributionAnomalyBucket(row);
   const hasUtm = [row.utm_source, row.utm_medium, row.utm_campaign].some(isMeaningfulSourceSignal);
   const effectiveChannel = getOrderAttributionChannel(row);
@@ -3578,17 +4149,17 @@ function diagnoseAttributionAnomaly(row) {
   if (hasAgenticText(sourceText)) {
     return {
       severity: 'medium',
-      title: '疑似 AI / Agentic 来源未完全归类',
+      title: '疑似 AI / Agentic 来源未完整归类',
       summary: '订单来源里出现 AI 平台信号，但主归因仍落在 Other 或 No Conversion Details。',
       checks: [
         '打开 /api/order-journey?order_id=' + row.order_id + ' 查看 Shopify journey moments。',
-        '检查 landing_site/referring_site 是否包含 ChatGPT、Gemini、Perplexity、Claude 等来源。',
-        '确认 classifyChannel 和 Shopify Agentic 检测规则是否覆盖该来源写法。'
+        '核对 landing_site、referring_site、source_name 是否包含 ChatGPT、Gemini、Perplexity、Claude 等来源。',
+        '确认 attribution_rules 是否已有对应 AI 来源规则，且 pattern 覆盖当前写法。'
       ],
       fixes: [
-        '把确认后的 AI 来源加入 AI/Agentic 归因映射。',
-        '后续 AI 推广链接统一添加 utm_source 与 utm_campaign。',
-        '对该订单做一次归因回填，确认 first/last touch 是否变化。'
+        '确认来源后把对应 pattern 写入 attribution_rules，并通过 /api/attribution-rules/apply 回填。',
+        '后续 AI 推广或推荐链接统一加 utm_source、utm_medium、utm_campaign。',
+        '对该订单点开“详情”核对 first touch、last touch、Pixel 事件和 catalog 匹配。'
       ]
     };
   }
@@ -3597,16 +4168,16 @@ function diagnoseAttributionAnomaly(row) {
     return {
       severity: 'medium',
       title: 'Shopify 无 journey，但订单 URL 有 UTM',
-      summary: 'Shopify customerJourney 没返回 conversion details，但 landing/note attributes 里仍有可用 UTM。',
+      summary: 'Shopify customerJourney 没返回 conversion details，但订单字段里仍有可用 UTM。',
       checks: [
-        '核对 landing_site、note_attributes、cart attributes 是否都写入了同一组 UTM。',
+        '核对 landing_site、note_attributes、cart attributes 是否写入同一组 UTM。',
         '打开订单 journey 接口确认 moments_count 是否为 0。',
-        '抽查对应 session_id 是否在 pixel_events 有 page_viewed -> checkout_completed 链路。'
+        '抽查对应 session_id 是否在 pixel_events 有 page_viewed 到 checkout_completed 链路。'
       ],
       fixes: [
         '确保 theme UTM snippet 在进入购物车前写入 cart attributes。',
-        '所有广告、KOL、邮件、AI 推荐链接统一带 utm_source / utm_medium / utm_campaign。',
-        '对高金额订单先按 UTM 人工归类，必要时补充映射规则。'
+        '广告、KOL、邮件、AI 推荐链接统一使用 utm_source / utm_medium / utm_campaign。',
+        '对高金额订单先按 UTM 人工归类，必要时补充规则做批量回填。'
       ]
     };
   }
@@ -3615,16 +4186,16 @@ function diagnoseAttributionAnomaly(row) {
     return {
       severity: 'medium',
       title: 'Last touch 已识别，但主渠道仍是 Other',
-      summary: `当前 Last Non-Click 可识别为 ${effectiveChannel}，需要确认 primary channel 是否应按 last touch 展示。`,
+      summary: `当前 Last Non-Click 可识别为 ${effectiveChannel}，需要确认主看板是否应按 last touch 展示。`,
       checks: [
         '比较 channel、first_touch_channel、last_touch_channel 三个字段。',
         '检查 first touch 是否被 Shopify 标成 Other，导致主渠道看起来不清晰。',
         '打开订单 journey 查看 first/last touch 的 sourceDescription。'
       ],
       fixes: [
-        '看板主表继续使用 Last Non-Click 口径，异常表保留 raw channel 便于排查。',
-        '如果确认为新来源，把 source_name/referrer 写法加入 classifyChannel。',
-        '对同类订单批量回填后再观察 Other 是否下降。'
+        '主表继续使用 Last Non-Click 口径，异常表保留 raw channel 便于审计。',
+        '如果确认是新来源，把 source_name/referrer 写法加入归因规则。',
+        '同类订单批量回填后观察 7d Other 是否下降。'
       ]
     };
   }
@@ -3637,16 +4208,16 @@ function diagnoseAttributionAnomaly(row) {
     return {
       severity: 'info',
       title: '疑似内部跳转或支付回跳来源',
-      summary: 'referrer/source_name 看起来来自站内、Shopify checkout 或 Shop App，可能不应算作真实获客来源。',
+      summary: 'referrer/source_name 看起来来自站内、Shopify checkout 或 Shop App，可能不是真实获客来源。',
       checks: [
-        '确认 referring_site/source_name 是否来自站内域名或 checkout。',
-        '查看 landing_site 是否为空，判断是否是直接进入结账或回跳。',
-        '检查支付、客服、订阅插件是否会覆盖 referrer。'
+        '确认 referring_site/source_name 是否来自站内域名、checkout 或 Shop App。',
+        '查看 landing_site 是否为空，判断是否是直接进入结账或支付回跳。',
+        '检查支付、客服、订阅插件是否覆盖 referrer。'
       ],
       fixes: [
-        '把明确的站内/支付回跳来源归为 Direct 或 Internal。',
+        '把明确的站内/支付回跳来源归为 Direct 或 Internal App。',
         '保留原始 source_name 方便后续审计。',
-        '新增外部推广时避免使用站内跳转短链丢失 UTM。'
+        '新增外部推广时避免使用会丢失 UTM 的站内跳转短链。'
       ]
     };
   }
@@ -3659,12 +4230,12 @@ function diagnoseAttributionAnomaly(row) {
       checks: [
         '检查 Shopify Custom Pixel 是否在落地页正常记录 page_viewed。',
         '检查 theme UTM snippet 是否能把 UTM 写入 cart attributes。',
-        '检查是否有隐私/跳转/支付流程清空了 referrer 和 landing_site。'
+        '检查隐私、跳转或支付流程是否清空了 referrer 和 landing_site。'
       ],
       fixes: [
-        '先从高金额订单人工询源或结合客服记录补渠道。',
-        '修复 UTM 写入链路后，新增订单应能带上 landing/referrer。',
-        '对无法追溯的历史订单保留 Unknown/Other，不强行猜测。'
+        '先从高金额订单人工问源或结合客服记录补渠道。',
+        '修复 UTM 写入链路后，新订单应能带上 landing/referrer。',
+        '无法追溯的历史订单保留 Unknown/Other，不强行猜测。'
       ]
     };
   }
@@ -3676,10 +4247,10 @@ function diagnoseAttributionAnomaly(row) {
     checks: [
       '打开订单 journey 接口检查 Shopify moments。',
       '查看 raw_data.source_name、landing_site、referring_site 与 UTM。',
-      '确认该来源是否应加入渠道映射。'
+      '确认该来源是否应加入 attribution_rules 映射。'
     ],
     fixes: [
-      '把确认后的来源写入 classifyChannel / normalizeChannelName。',
+      '确认来源后写入 attribution_rules 或手动 override。',
       '新推广链接统一 UTM 命名。',
       '修复后观察 7d Other / No Conversion Details 是否下降。'
     ]
@@ -3687,49 +4258,35 @@ function diagnoseAttributionAnomaly(row) {
 }
 
 async function buildAttributionAnomalies(env, rangeWindow, limit = 20) {
-  const rows = await env.DB.prepare(
-    `SELECT
-      order_id,
-      order_name,
-      shopify_created_at,
-      total_price,
-      channel,
-      first_touch_channel,
-      first_touch_campaign,
-      last_touch_channel,
-      last_touch_campaign,
-      utm_source,
-      utm_medium,
-      utm_campaign,
-      landing_site,
-      referring_site,
-      COALESCE(json_extract(raw_data, '$.source_name'), '') as source_name
-     FROM orders
-     WHERE substr(shopify_created_at, 1, 10) >= ?
-       AND substr(shopify_created_at, 1, 10) <= ?
-       AND (
-         COALESCE(channel, '') IN ('Other', 'No Conversion Details')
-         OR COALESCE(first_touch_channel, '') IN ('Other', 'No Conversion Details')
-         OR COALESCE(last_touch_channel, '') IN ('Other', 'No Conversion Details')
-       )
-     ORDER BY COALESCE(total_price, 0) DESC
-     LIMIT 5000`
-  ).bind(rangeWindow.start, rangeWindow.end).all();
+  const sourceRows = await queryOrdersForAttributionCleanup(env, rangeWindow.start, rangeWindow.end);
+  const rules = await getActiveAttributionRules(env);
+  const rows = sourceRows.filter((row) => {
+    return [
+      row.channel,
+      row.first_touch_channel,
+      row.last_touch_channel
+    ].some(isAttributionAnomalyValue) || row.override_channel;
+  });
 
   const summary = {
     other: { bucket: 'other', label: 'Other', orders: 0, revenue: 0 },
     no_conversion_details: { bucket: 'no_conversion_details', label: 'No Conversion Details', orders: 0, revenue: 0 }
   };
 
-  const orders = (rows.results || []).map((row) => {
+  const statusSummary = {};
+
+  const orders = rows.map((row) => {
     const bucket = getAttributionAnomalyBucket(row);
-    const diagnosis = diagnoseAttributionAnomaly(row);
-    const effectiveChannel = getOrderAttributionChannel(row);
+    const diagnosis = buildAttributionDiagnosis(row);
+    const effectiveAttribution = getEffectiveAttribution(row, rules);
+    const handlingStatus = normalizeStatus(row.override_status || 'open');
 
     if (summary[bucket]) {
       summary[bucket].orders += 1;
       summary[bucket].revenue += safeNumber(row.total_price);
     }
+
+    statusSummary[handlingStatus] = (statusSummary[handlingStatus] || 0) + 1;
 
     return {
       order_id: row.order_id,
@@ -3739,7 +4296,14 @@ async function buildAttributionAnomalies(env, rangeWindow, limit = 20) {
       bucket,
       bucket_label: summary[bucket]?.label || 'Unknown',
       channel: normalizeChannelName(row.channel || ''),
-      effective_channel: effectiveChannel,
+      effective_channel: effectiveAttribution.channel,
+      effective_source: effectiveAttribution.source,
+      handling_status: handlingStatus,
+      override_channel: row.override_channel || '',
+      override_campaign: row.override_campaign || '',
+      override_reason: row.override_reason || '',
+      override_note: row.override_note || '',
+      suggested_rule: effectiveAttribution.rule,
       first_touch_channel: normalizeChannelName(row.first_touch_channel || ''),
       first_touch_campaign: row.first_touch_campaign || '',
       last_touch_channel: normalizeChannelName(row.last_touch_channel || ''),
@@ -3768,6 +4332,8 @@ async function buildAttributionAnomalies(env, rangeWindow, limit = 20) {
     start: rangeWindow.start,
     end: rangeWindow.end,
     totals,
+    status_summary: statusSummary,
+    rules_count: rules.length,
     summary: Object.values(summary),
     orders: orders.slice(0, limit)
   };
@@ -3780,6 +4346,151 @@ async function handleAttributionAnomalies(request, env, cors) {
   const result = await buildAttributionAnomalies(env, rangeWindow, limit);
 
   return json(result, 200, cors);
+}
+
+async function handleOrderDiagnostics(request, env, cors) {
+  const url = new URL(request.url);
+  const orderId = String(url.searchParams.get('order_id') || '').trim();
+
+  if (!orderId) {
+    return json({ error: 'order_id is required' }, 400, cors);
+  }
+
+  const order = await env.DB.prepare(
+    `SELECT
+      o.*,
+      COALESCE(json_extract(o.raw_data, '$.source_name'), '') as source_name,
+      COALESCE(ov.status, 'open') as override_status,
+      COALESCE(ov.override_channel, '') as override_channel,
+      COALESCE(ov.override_campaign, '') as override_campaign,
+      COALESCE(ov.reason, '') as override_reason,
+      COALESCE(ov.note, '') as override_note,
+      ov.rule_id as override_rule_id,
+      ov.updated_at as override_updated_at
+     FROM orders o
+     LEFT JOIN order_attribution_overrides ov ON ov.order_id = o.order_id
+     WHERE o.order_id = ? OR o.order_name = ?
+     LIMIT 1`
+  ).bind(orderId, orderId).first();
+
+  if (!order) {
+    return json({ error: 'order_not_found', order_id: orderId }, 404, cors);
+  }
+
+  const rules = await getActiveAttributionRules(env);
+  const effective = getEffectiveAttribution(order, rules);
+  const diagnosis = buildAttributionDiagnosis(order);
+  const lineItems = parseLineItems(order.line_items);
+  const startDate = order.shopify_created_at
+    ? addDaysToDateStr(String(order.shopify_created_at).slice(0, 10), -1)
+    : addDaysToDateStr(todayStr(), -1);
+  const endDate = order.shopify_created_at
+    ? addDaysToDateStr(String(order.shopify_created_at).slice(0, 10), 1)
+    : todayStr();
+
+  const productKeys = lineItems.map((item) => ({
+    sku: item.sku || '',
+    product_id: item.product_id || '',
+    variant_id: item.variant_id || '',
+    title: item.title || ''
+  })).filter((item) => item.sku || item.product_id || item.variant_id || item.title);
+
+  const pixelRows = await env.DB.prepare(
+    `SELECT
+      event_name,
+      timestamp,
+      session_id,
+      page_url,
+      referrer,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      product_id,
+      product_title,
+      product_sku,
+      variant_id,
+      order_id
+     FROM pixel_events
+     WHERE DATE(timestamp) >= ?
+       AND DATE(timestamp) <= ?
+       AND (
+         COALESCE(order_id, '') = ?
+         OR COALESCE(order_id, '') = ?
+         OR COALESCE(utm_source, '') = ?
+         OR COALESCE(utm_campaign, '') = ?
+         OR COALESCE(referrer, '') = ?
+       )
+     ORDER BY timestamp ASC
+     LIMIT 80`
+  ).bind(
+    startDate,
+    endDate,
+    order.order_id,
+    order.order_name || '',
+    order.utm_source || '',
+    order.utm_campaign || '',
+    order.referring_site || ''
+  ).all();
+
+  let catalogMatches = [];
+
+  if (productKeys.length) {
+    const placeholders = productKeys.map(() => '?').join(',');
+    const catalogRows = await env.DB.prepare(
+      `SELECT product_id, variant_id, sku, product_title, source, last_seen_at
+       FROM product_catalog
+       WHERE sku IN (${placeholders})
+          OR product_id IN (${placeholders})
+          OR variant_id IN (${placeholders})
+          OR product_title IN (${placeholders})
+       ORDER BY last_seen_at DESC
+       LIMIT 50`
+    )
+      .bind(
+        ...productKeys.map((item) => item.sku),
+        ...productKeys.map((item) => item.product_id),
+        ...productKeys.map((item) => item.variant_id),
+        ...productKeys.map((item) => item.title)
+      )
+      .all();
+
+    catalogMatches = catalogRows.results || [];
+  }
+
+  return json({
+    order: {
+      order_id: order.order_id,
+      order_name: order.order_name,
+      shopify_created_at: order.shopify_created_at,
+      total_price: safeNumber(order.total_price),
+      channel: normalizeChannelName(order.channel || ''),
+      first_touch_channel: normalizeChannelName(order.first_touch_channel || ''),
+      first_touch_campaign: order.first_touch_campaign || '',
+      last_touch_channel: normalizeChannelName(order.last_touch_channel || ''),
+      last_touch_campaign: order.last_touch_campaign || '',
+      utm_source: order.utm_source || '',
+      utm_medium: order.utm_medium || '',
+      utm_campaign: order.utm_campaign || '',
+      landing_site: order.landing_site || '',
+      referring_site: order.referring_site || '',
+      source_name: order.source_name || '',
+      line_items: lineItems
+    },
+    override: {
+      status: normalizeStatus(order.override_status || 'open'),
+      override_channel: order.override_channel || '',
+      override_campaign: order.override_campaign || '',
+      reason: order.override_reason || '',
+      note: order.override_note || '',
+      rule_id: order.override_rule_id || null,
+      updated_at: order.override_updated_at || null
+    },
+    effective,
+    diagnosis,
+    matching_rule: findAttributionRuleMatch(order, rules),
+    catalog_matches: catalogMatches,
+    related_pixel_events: pixelRows.results || []
+  }, 200, cors);
 }
 
 // ============================================
@@ -3797,6 +4508,30 @@ function parseLineItems(rawLineItems) {
   }
 }
 
+async function queryProductCatalogMap(env) {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT product_id, variant_id, sku, product_title, source, last_seen_at
+       FROM product_catalog
+       ORDER BY last_seen_at DESC
+       LIMIT 10000`
+    ).all();
+
+    const map = {};
+
+    (rows.results || []).forEach((row) => {
+      if (row.product_id) map['product:' + String(row.product_id).toLowerCase()] = row;
+      if (row.variant_id) map['variant:' + String(row.variant_id).toLowerCase()] = row;
+      if (row.sku) map['sku:' + String(row.sku).toLowerCase()] = row;
+      if (row.product_title) map['title:' + String(row.product_title).toLowerCase()] = row;
+    });
+
+    return map;
+  } catch (err) {
+    return {};
+  }
+}
+
 async function queryPixelProductRows(env, startDate, endDate) {
   try {
     const rows = await env.DB.prepare(
@@ -3805,6 +4540,7 @@ async function queryPixelProductRows(env, startDate, endDate) {
         COALESCE(product_id, '') as product_id,
         COALESCE(product_title, '') as product_title,
         COALESCE(product_sku, '') as product_sku,
+        COALESCE(variant_id, '') as variant_id,
         COALESCE(utm_source, '') as utm_source,
         COALESCE(utm_campaign, '') as utm_campaign,
         COALESCE(referrer, '') as referrer,
@@ -3816,7 +4552,7 @@ async function queryPixelProductRows(env, startDate, endDate) {
          AND DATE(timestamp) <= ?
          AND event_name IN ('product_viewed', 'product_added_to_cart')
          AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '' OR COALESCE(product_sku, '') != '')
-       GROUP BY event_name, product_id, product_title, product_sku, utm_source, utm_campaign, referrer`
+       GROUP BY event_name, product_id, product_title, product_sku, variant_id, utm_source, utm_campaign, referrer`
     ).bind(startDate, endDate).all();
 
     return rows.results || [];
@@ -3827,6 +4563,7 @@ async function queryPixelProductRows(env, startDate, endDate) {
         COALESCE(product_id, '') as product_id,
         COALESCE(product_title, '') as product_title,
         '' as product_sku,
+        COALESCE(variant_id, '') as variant_id,
         COALESCE(utm_source, '') as utm_source,
         COALESCE(utm_campaign, '') as utm_campaign,
         COALESCE(referrer, '') as referrer,
@@ -3838,28 +4575,47 @@ async function queryPixelProductRows(env, startDate, endDate) {
          AND DATE(timestamp) <= ?
          AND event_name IN ('product_viewed', 'product_added_to_cart')
          AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '')
-       GROUP BY event_name, product_id, product_title, utm_source, utm_campaign, referrer`
+       GROUP BY event_name, product_id, product_title, variant_id, utm_source, utm_campaign, referrer`
     ).bind(startDate, endDate).all();
 
     return rows.results || [];
   }
 }
 
-function buildPixelProductMap(pixelRows) {
+function getCatalogMatchForPixel(row, catalogMap) {
+  const keys = [
+    row.product_id ? 'product:' + String(row.product_id).toLowerCase() : '',
+    row.variant_id ? 'variant:' + String(row.variant_id).toLowerCase() : '',
+    row.product_sku ? 'sku:' + String(row.product_sku).toLowerCase() : '',
+    row.product_title ? 'title:' + String(row.product_title).toLowerCase() : ''
+  ].filter(Boolean);
+
+  for (const key of keys) {
+    if (catalogMap[key]) return catalogMap[key];
+  }
+
+  return null;
+}
+
+function buildPixelProductMap(pixelRows, catalogMap = {}) {
   const map = {};
 
   (pixelRows || []).forEach((row) => {
-    const key = normalizeProductKey(row.product_sku, row.product_title, row.product_id);
-    const titleKey = normalizeProductKey('', row.product_title, '');
+    const catalog = getCatalogMatchForPixel(row, catalogMap);
+    const sku = row.product_sku || catalog?.sku || '';
+    const title = row.product_title || catalog?.product_title || '';
+    const productId = row.product_id || catalog?.product_id || '';
+    const key = normalizeProductKey(sku, title, productId);
+    const titleKey = normalizeProductKey('', title, '');
 
     if (!key) return;
 
     if (!map[key]) {
       map[key] = {
         key,
-        sku: row.product_sku || '',
-        product_id: row.product_id || '',
-        product_title: row.product_title || '',
+        sku,
+        product_id: productId,
+        product_title: title,
         views: 0,
         add_to_cart: 0,
         sessions: 0,
@@ -3917,38 +4673,55 @@ function findPixelProductInterest(pixelMap, sku, title, productId) {
 async function buildProductPerformance(env, rangeWindow, limit = 15) {
   const orderRows = await env.DB.prepare(
     `SELECT
-      order_id,
-      order_name,
-      total_price,
-      channel,
-      first_touch_channel,
-      last_touch_channel,
-      line_items,
-      shopify_created_at
-     FROM orders
-     WHERE substr(shopify_created_at, 1, 10) >= ?
-       AND substr(shopify_created_at, 1, 10) <= ?
-     ORDER BY shopify_created_at DESC
+      o.order_id,
+      o.order_name,
+      o.total_price,
+      o.channel,
+      o.first_touch_channel,
+      o.first_touch_campaign,
+      o.last_touch_channel,
+      o.last_touch_campaign,
+      o.utm_source,
+      o.utm_medium,
+      o.utm_campaign,
+      o.utm_content,
+      o.utm_term,
+      o.landing_site,
+      o.referring_site,
+      COALESCE(json_extract(o.raw_data, '$.source_name'), '') as source_name,
+      COALESCE(ov.status, '') as override_status,
+      COALESCE(ov.override_channel, '') as override_channel,
+      COALESCE(ov.override_campaign, '') as override_campaign,
+      o.line_items,
+      o.shopify_created_at
+     FROM orders o
+     LEFT JOIN order_attribution_overrides ov ON ov.order_id = o.order_id
+     WHERE substr(o.shopify_created_at, 1, 10) >= ?
+       AND substr(o.shopify_created_at, 1, 10) <= ?
+     ORDER BY o.shopify_created_at DESC
      LIMIT 5000`
   ).bind(rangeWindow.start, rangeWindow.end).all();
 
   const pixelRows = await queryPixelProductRows(env, rangeWindow.start, rangeWindow.end);
-  const pixelMap = buildPixelProductMap(pixelRows);
+  const catalogMap = await queryProductCatalogMap(env);
+  const pixelMap = buildPixelProductMap(pixelRows, catalogMap);
+  const rules = await getActiveAttributionRules(env);
   const productMap = {};
   let totalLineItems = 0;
   let skuLineItems = 0;
 
   (orderRows.results || []).forEach((order) => {
     const items = parseLineItems(order.line_items);
-    const channel = getOrderAttributionChannel(order);
+    const channel = getEffectiveAttribution(order, rules).channel;
 
     items.forEach((item) => {
       const sku = String(item.sku || '').trim();
       const title = String(item.title || '').trim() || 'Unknown Product';
+      const productId = String(item.product_id || '').trim();
       const qty = Math.max(1, safeNumber(item.quantity || 1));
       const price = safeNumber(item.price);
       const revenue = price > 0 ? price * qty : 0;
-      const key = normalizeProductKey(sku, title, '');
+      const key = normalizeProductKey(sku, title, productId);
 
       totalLineItems++;
       if (sku) skuLineItems++;
@@ -3958,6 +4731,7 @@ async function buildProductPerformance(env, rangeWindow, limit = 15) {
         productMap[key] = {
           key,
           sku,
+          product_id: productId,
           product_title: title,
           orders_map: {},
           orders: 0,
@@ -3979,12 +4753,13 @@ async function buildProductPerformance(env, rangeWindow, limit = 15) {
       product.channels[channel] = (product.channels[channel] || 0) + revenue;
 
       if (!product.sku && sku) product.sku = sku;
+      if (!product.product_id && productId) product.product_id = productId;
       if (!product.product_title && title) product.product_title = title;
     });
   });
 
   Object.values(productMap).forEach((product) => {
-    const interest = findPixelProductInterest(pixelMap, product.sku, product.product_title, '');
+    const interest = findPixelProductInterest(pixelMap, product.sku, product.product_title, product.product_id || '');
 
     product.orders = Object.keys(product.orders_map).length;
     delete product.orders_map;
@@ -4004,9 +4779,9 @@ async function buildProductPerformance(env, rangeWindow, limit = 15) {
     product.view_to_cart_rate = product.views > 0 ? (product.add_to_cart / product.views) * 100 : null;
   });
 
-  const products = Object.values(productMap)
+  const allProducts = Object.values(productMap)
     .sort((a, b) => b.revenue - a.revenue || b.units - a.units)
-    .slice(0, limit);
+  const products = allProducts.slice(0, limit);
 
   const aiInterest = Object.values(pixelMap)
     .filter((row) => row.ai_requests > 0)
@@ -4022,7 +4797,7 @@ async function buildProductPerformance(env, rangeWindow, limit = 15) {
       last_event_at: row.last_event_at || ''
     }));
 
-  const totals = products.reduce((acc, row) => {
+  const totals = allProducts.reduce((acc, row) => {
     acc.orders += row.orders || 0;
     acc.units += row.units || 0;
     acc.revenue += row.revenue || 0;
@@ -4061,6 +4836,51 @@ async function handleProductPerformance(request, env, cors) {
   const result = await buildProductPerformance(env, rangeWindow, limit);
 
   return json(result, 200, cors);
+}
+
+async function handleProductCatalogBackfill(request, env, cors) {
+  if (!hasWriteAccess(request, env)) {
+    return json({ error: 'Unauthorized' }, 401, cors);
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT order_id, line_items
+     FROM orders
+     WHERE line_items IS NOT NULL
+       AND line_items != ''
+     ORDER BY shopify_created_at DESC
+     LIMIT 5000`
+  ).all();
+
+  let orders = 0;
+  let items = 0;
+
+  for (const row of rows.results || []) {
+    const lineItems = parseLineItems(row.line_items);
+    orders++;
+    items += lineItems.length;
+
+    await upsertProductCatalogItems(
+      env,
+      lineItems.map((item) => ({
+        product_id: item.product_id || '',
+        variant_id: item.variant_id || '',
+        sku: item.sku || '',
+        product_title: item.title || '',
+        raw_data: {
+          order_id: row.order_id,
+          ...item
+        }
+      })),
+      'orders_backfill'
+    );
+  }
+
+  return json({
+    ok: true,
+    orders_scanned: orders,
+    line_items_scanned: items
+  }, 200, cors);
 }
 
 async function handleChannels(request, env, cors) {
@@ -4514,12 +5334,14 @@ async function handleFeishuSync(request, env, cors) {
                 const source = row.utm_source || row.referring_site || row.source_name || row.landing_site || '-';
                 return [
                   `${index + 1}. **${feishuEsc(row.order_name || row.order_id)}** / ${feishuEsc(row.bucket_label || '-')}`,
+                  `状态=${feishuEsc(row.handling_status || 'open')}`,
                   feishuMoney(row.total_price || 0),
                   `effective=${feishuEsc(row.effective_channel || '-')}`,
                   `source=${feishuEsc(String(source).slice(0, 80))}`,
                   `问题=${feishuEsc(row.diagnosis?.title || '-')}`,
+                  row.suggested_rule ? `规则=${feishuEsc(row.suggested_rule.name || '-')}` : '',
                   `修复=${feishuEsc((row.diagnosis?.fixes || [])[0] || '-')}`
-                ].join(' / ');
+                ].filter(Boolean).join(' / ');
               }).join('\n')
             : '暂无 Other / No Conversion Details 异常订单'
         )
@@ -4545,6 +5367,26 @@ async function handleFeishuSync(request, env, cors) {
           return `${index + 1}. ${feishuEsc(product)} / AI 访问 ${row.ai_requests || 0} 次 / 浏览 ${row.views || 0} / 加购 ${row.add_to_cart || 0}`;
         }).join('\n')
       : '暂无 AI 商品兴趣数据';
+
+    const topIssue = attributionAnomalies && (attributionAnomalies.orders || []).length
+      ? attributionAnomalies.orders[0]
+      : null;
+    const topProduct = productPerformance && (productPerformance.products || []).length
+      ? productPerformance.products[0]
+      : null;
+    const openAnomalyCount = attributionAnomalies?.status_summary?.open || 0;
+
+    const executiveSummaryText = [
+      `1. 销售 ${feishuMoney(orders.revenue || 0)} / 订单 ${orders.cnt || 0} / CR ${feishuPct(cr)} / AOV ${feishuMoney(aov)}。`,
+      `2. 数据健康：${feishuEsc(syncHealth?.status || 'unknown')}；Pending Attribution ${syncHealth?.pending_attribution_count || 0}；归因异常 ${attributionAnomalies?.totals?.orders || 0} 单 / ${feishuMoney(attributionAnomalies?.totals?.revenue || 0)}，open ${openAnomalyCount} 单。`,
+      topIssue
+        ? `3. 今日优先排查：${feishuEsc(topIssue.order_name || topIssue.order_id)} / ${feishuMoney(topIssue.total_price || 0)} / ${feishuEsc(topIssue.diagnosis?.title || '-')}${topIssue.suggested_rule ? ` / 建议规则 ${feishuEsc(topIssue.suggested_rule.name)}` : ''}。`
+        : '3. 今日优先排查：暂无高优先级归因异常。',
+      topProduct
+        ? `4. Top SKU：${feishuEsc(topProduct.sku || topProduct.product_title || '-')} / ${topProduct.orders || 0} 单 / ${feishuMoney(topProduct.revenue || 0)} / Top 渠道 ${feishuEsc(topProduct.top_channel || '-')}.`
+        : '4. Top SKU：暂无商品销售数据。',
+      `5. AI 商品兴趣：${feishuEsc((productPerformance?.ai_interest || [])[0]?.product_title || '暂无')}。`
+    ].join('\n');
 
     const alerts = [];
 
@@ -4625,6 +5467,16 @@ async function handleFeishuSync(request, env, cors) {
                 `↩️ 退款：**${refunds.cnt || 0} 笔 / ${feishuMoney(refunds.amount)}**`,
                 `↩️ 退款率：**${feishuPct(refundRate)}**`
               ].join('\n')
+            }
+          },
+          {
+            tag: 'hr'
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**今日执行摘要**\n${executiveSummaryText}`
             }
           },
           {

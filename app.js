@@ -76,6 +76,20 @@ function fetchAttributionAnomalies() {
   });
 }
 
+function fetchAttributionRules() {
+  return fetch(API_BASE + '/api/attribution-rules').then(function (r) {
+    if (!r.ok) throw new Error('Attribution rules API ' + r.status);
+    return r.json();
+  });
+}
+
+function fetchOrderDiagnostics(orderId) {
+  return fetch(API_BASE + '/api/order-diagnostics?order_id=' + encodeURIComponent(orderId)).then(function (r) {
+    if (!r.ok) throw new Error('Order diagnostics API ' + r.status);
+    return r.json();
+  });
+}
+
 function fetchProductPerformance() {
   return fetch(API_BASE + '/api/product-performance' + getRangeQuery()).then(function (r) {
     if (!r.ok) throw new Error('Product performance API ' + r.status);
@@ -826,28 +840,91 @@ function renderAttributionAnomalies(data) {
   setText('anomalyTotalRevenue', fmtMoney(totals.revenue || 0));
   setText('anomalyOtherCount', fmtNum(totals.other_orders || 0));
   setText('anomalyNoConversionCount', fmtNum(totals.no_conversion_orders || 0));
+  setText('anomalyOpenCount', fmtNum((data.status_summary && data.status_summary.open) || 0));
+  setText('anomalyRulesCount', fmtNum(data.rules_count || 0));
 
   var rows = data && data.orders ? data.orders.slice(0, 12) : [];
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:0.5">暂无 Other / No Conversion Details 异常订单</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;opacity:0.5">暂无 Other / No Conversion Details 异常订单</td></tr>';
     return;
   }
 
   tbody.innerHTML = rows.map(function (row) {
     var source = row.utm_source || row.referring_site || row.source_name || row.landing_site || '-';
     var diagnosis = row.diagnosis || {};
+    var rule = row.suggested_rule || null;
 
     return '<tr>' +
       '<td>' + escHtml(row.order_name || row.order_id || '-') + '</td>' +
+      '<td>' + escHtml(row.handling_status || 'open') + '</td>' +
       '<td>' + escHtml(row.bucket_label || '-') + '</td>' +
       '<td>' + fmtMoney(row.total_price || 0) + '</td>' +
-      '<td>' + escHtml(row.effective_channel || '-') + '</td>' +
+      '<td>' + escHtml(row.effective_channel || '-') + '<br><span class="mini-muted">' + escHtml(row.effective_source || '-') + '</span></td>' +
       '<td style="white-space:normal;min-width:180px;">' + escHtml(String(source).slice(0, 120)) + '</td>' +
       '<td style="white-space:normal;min-width:220px;"><strong>' + escHtml(diagnosis.title || '-') + '</strong><br>' + escHtml(diagnosis.summary || '-') + '</td>' +
-      '<td style="white-space:normal;min-width:240px;">' + escHtml((diagnosis.fixes || []).slice(0, 2).join('；') || '-') + '</td>' +
+      '<td style="white-space:normal;min-width:200px;">' + (rule ? escHtml(rule.name + ' -> ' + rule.target_channel) : '-') + '</td>' +
+      '<td><button class="mini-btn" data-order-id="' + escHtml(row.order_id) + '" onclick="showOrderDiagnostics(this.getAttribute(\'data-order-id\'))">详情</button></td>' +
       '</tr>';
   }).join('');
+}
+
+function renderAttributionRules(data) {
+  var tbody = document.getElementById('attributionRuleBody');
+  if (!tbody) return;
+
+  var rules = data && data.rules ? data.rules.slice(0, 12) : [];
+
+  if (!rules.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;opacity:0.5">暂无归因规则</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rules.map(function (rule) {
+    return '<tr>' +
+      '<td>' + fmtNum(rule.priority || 0) + '</td>' +
+      '<td>' + escHtml(rule.name || '-') + '</td>' +
+      '<td>' + escHtml((rule.match_field || 'all') + ' / ' + (rule.match_type || 'contains')) + '</td>' +
+      '<td style="white-space:normal;min-width:180px;">' + escHtml(rule.pattern || '-') + '</td>' +
+      '<td>' + escHtml(rule.target_channel || '-') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function showOrderDiagnostics(orderId) {
+  var panel = document.getElementById('orderDiagnosticsPanel');
+  if (!panel) return;
+
+  panel.innerHTML = '<div class="analysis-empty">正在加载订单诊断...</div>';
+
+  fetchOrderDiagnostics(orderId)
+    .then(function (data) {
+      var order = data.order || {};
+      var effective = data.effective || {};
+      var diagnosis = data.diagnosis || {};
+      var override = data.override || {};
+      var pixels = data.related_pixel_events || [];
+      var catalog = data.catalog_matches || [];
+
+      panel.innerHTML = '<div class="diagnostic-card">' +
+        '<div class="diagnostic-head">' +
+        '<div class="diagnostic-title">' + escHtml(order.order_name || order.order_id || '-') + ' · ' + fmtMoney(order.total_price || 0) + '</div>' +
+        '<div class="diagnostic-severity ' + escHtml(diagnosis.severity || 'info') + '">' + escHtml(diagnosis.severity || 'info') + '</div>' +
+        '</div>' +
+        '<div class="diagnostic-line"><strong>有效归因：</strong>' + escHtml(effective.channel || '-') + ' / ' + escHtml(effective.source || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>原始归因：</strong>' + escHtml(order.channel || '-') + ' · FT ' + escHtml(order.first_touch_channel || '-') + ' · LT ' + escHtml(order.last_touch_channel || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>来源信号：</strong>' + escHtml([order.utm_source, order.utm_medium, order.utm_campaign, order.referring_site, order.source_name].filter(Boolean).join(' / ') || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>处理状态：</strong>' + escHtml(override.status || 'open') + (override.override_channel ? ' -> ' + escHtml(override.override_channel) : '') + '</div>' +
+        '<div class="diagnostic-line"><strong>问题：</strong>' + escHtml(diagnosis.title || '-') + '；' + escHtml(diagnosis.summary || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>排查：</strong>' + escHtml((diagnosis.checks || []).slice(0, 3).join('；') || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>修复：</strong>' + escHtml((diagnosis.fixes || []).slice(0, 3).join('；') || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>商品：</strong>' + escHtml((order.line_items || []).map(function (item) { return (item.sku || '-') + ' ' + (item.title || ''); }).join('；') || '-') + '</div>' +
+        '<div class="diagnostic-line"><strong>Pixel 相关事件：</strong>' + fmtNum(pixels.length) + ' 条；Catalog 匹配：' + fmtNum(catalog.length) + ' 条</div>' +
+        '</div>';
+    })
+    .catch(function (err) {
+      panel.innerHTML = '<div class="analysis-empty">订单诊断加载失败：' + escHtml(err.message) + '</div>';
+    });
 }
 
 function renderProductPerformance(data) {
@@ -1023,6 +1100,10 @@ function loadAllData() {
         console.warn('Attribution anomalies fetch failed:', e);
         return null;
       }),
+      fetchAttributionRules().catch(function (e) {
+        console.warn('Attribution rules fetch failed:', e);
+        return null;
+      }),
       fetchProductPerformance().catch(function (e) {
         console.warn('Product performance fetch failed:', e);
         return null;
@@ -1035,7 +1116,8 @@ function loadAllData() {
     var agentic = results[3];
     var syncHealth = results[4];
     var anomalies = results[5];
-    var productPerformance = results[6];
+    var rules = results[6];
+    var productPerformance = results[7];
 
     if (dashboard) {
       updateKPIs(dashboard.kpi);
@@ -1079,6 +1161,10 @@ function loadAllData() {
 
     if (anomalies) {
       renderAttributionAnomalies(anomalies);
+    }
+
+    if (rules) {
+      renderAttributionRules(rules);
     }
 
     if (productPerformance) {

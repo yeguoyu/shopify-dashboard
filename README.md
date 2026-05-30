@@ -58,6 +58,8 @@ var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 - `GET /api/agentic-summary?range=today|7d|30d`
 - `GET /api/sync-health?range=today|7d|30d`
 - `GET /api/attribution-anomalies?range=today|7d|30d`
+- `GET /api/order-diagnostics?order_id=...`
+- `GET /api/attribution-rules`
 - `GET /api/product-performance?range=today|7d|30d`
 
 ## Cloudflare Worker
@@ -84,7 +86,13 @@ main = "src/worker.js"
 - `GET /api/agentic-summary`
 - `GET /api/sync-health`
 - `GET /api/attribution-anomalies`
+- `POST /api/attribution-anomalies/status`
+- `GET /api/attribution-rules`
+- `POST /api/attribution-rules`
+- `POST /api/attribution-rules/apply`
+- `GET /api/order-diagnostics`
 - `GET /api/product-performance`
+- `POST /api/product-catalog/backfill`
 - `POST /api/feishu-sync`
 - `GET /api/order-journey?order_id=...`
 
@@ -114,6 +122,7 @@ wrangler d1 execute thermal-master-db --file=schema.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-meta-ad-insights.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-agent-catalog-logs.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-pixel-product-sku.sql
+wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-attribution-closure.sql
 wrangler deploy
 ```
 
@@ -140,8 +149,23 @@ curl "https://thermal-master-api.thermalmaster.workers.dev/api/agentic-summary?r
 ```bash
 curl "https://thermal-master-api.thermalmaster.workers.dev/api/sync-health?range=7d&date=YYYY-MM-DD"
 curl "https://thermal-master-api.thermalmaster.workers.dev/api/attribution-anomalies?range=7d&date=YYYY-MM-DD"
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/order-diagnostics?order_id=ORDER_ID"
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/attribution-rules"
 curl "https://thermal-master-api.thermalmaster.workers.dev/api/product-performance?range=7d&date=YYYY-MM-DD"
 ```
+
+批量应用已启用的归因规则和回填商品目录需要写入 token：
+```bash
+curl -X POST "https://thermal-master-api.thermalmaster.workers.dev/api/attribution-rules/apply?range=7d&date=YYYY-MM-DD" \
+  -H "Authorization: Bearer YOUR_API_WRITE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"dry_run\":true}"
+
+curl -X POST "https://thermal-master-api.thermalmaster.workers.dev/api/product-catalog/backfill" \
+  -H "Authorization: Bearer YOUR_API_WRITE_TOKEN"
+```
+
+归因规则默认只作用于弱归因或异常归因订单，避免把已经明确的 Facebook、Google、Email 等正常渠道误改；批量回填前建议先用 `dry_run=true` 查看 samples。
 
 ## Shopify 智能体渠道总结
 

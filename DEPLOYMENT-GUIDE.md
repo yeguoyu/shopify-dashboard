@@ -372,6 +372,7 @@ curl "https://thermal-master-api.你的子域名.workers.dev/api/meta/insights?d
 ```bash
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-agent-catalog-logs.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-pixel-product-sku.sql
+wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-attribution-closure.sql
 ```
 
 ### B. 部署 Worker
@@ -386,6 +387,8 @@ wrangler deploy
 curl "https://thermal-master-api.你的子域名.workers.dev/api/agentic-summary?range=today&date=2026-05-28"
 curl "https://thermal-master-api.你的子域名.workers.dev/api/sync-health?range=7d&date=2026-05-29"
 curl "https://thermal-master-api.你的子域名.workers.dev/api/attribution-anomalies?range=7d&date=2026-05-29"
+curl "https://thermal-master-api.你的子域名.workers.dev/api/attribution-rules"
+curl "https://thermal-master-api.你的子域名.workers.dev/api/order-diagnostics?order_id=ORDER_ID"
 curl "https://thermal-master-api.你的子域名.workers.dev/api/product-performance?range=7d&date=2026-05-29"
 ```
 
@@ -396,6 +399,24 @@ curl "https://thermal-master-api.你的子域名.workers.dev/api/product-perform
 `Catalog -> API logs` 目前有表结构和看板展示位，但还需要在后续商品/catalog API 访问入口中把 `agent_name`、`sku`、`product_id`、`product_title`、`request_path` 等字段写入 `agent_catalog_logs`，才能精确统计 “哪个 AI Agent 抓了哪个 SKU”。
 
 当前看板会用 Pixel 商品浏览/加购事件作为 Catalog fallback；执行 `2026-05-30-pixel-product-sku.sql` 并更新 Shopify Custom Pixel 后，新商品事件会写入 `product_sku`，商品/SKU 分析和飞书日报会同步展示。
+
+### E. 归因规则和商品目录回填
+
+`2026-05-30-attribution-closure.sql` 会创建 `attribution_rules`、`order_attribution_overrides`、`product_catalog` 三张表。默认规则只用于弱归因或异常归因订单，避免把已明确的 Facebook、Google、Email 等渠道误改。
+
+需要写入 token 的操作：
+
+```bash
+curl -X POST "https://thermal-master-api.你的子域名.workers.dev/api/attribution-rules/apply?range=7d&date=2026-05-29" \
+  -H "Authorization: Bearer YOUR_API_WRITE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"dry_run\":true}"
+
+curl -X POST "https://thermal-master-api.你的子域名.workers.dev/api/product-catalog/backfill" \
+  -H "Authorization: Bearer YOUR_API_WRITE_TOKEN"
+```
+
+建议先跑 `dry_run=true` 看 `matched_count` 和 samples，确认规则没有误伤后再去掉 dry run。
 
 ---
 
@@ -425,7 +446,8 @@ var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 | Webhook 接收 | 创建订单后 D1 有 orders 记录 |
 | Meta 同步 | 调用 /api/meta/sync 后 D1 有 meta_ad_insights 记录，ad_spend 有 Facebook 花费 |
 | Shopify 智能体总结 | 调用 /api/agentic-summary 返回 kpi、报表入口映射和空/非空 AI 渠道清单 |
-| 同步健康 / 异常归因 / 商品SKU | 调用 /api/sync-health、/api/attribution-anomalies、/api/product-performance 返回明细 |
+| 同步健康 / 异常归因 / 商品SKU | 调用 /api/sync-health、/api/attribution-anomalies、/api/order-diagnostics、/api/product-performance 返回明细 |
+| 归因规则 | 调用 /api/attribution-rules 返回默认 AI、内部跳转、邮件、YouTube 等规则 |
 | 飞书推送 | 调用 /api/feishu-sync 群里收到消息 |
 | 定时触发 | Cloudflare Dashboard → Workers → Triggers 显示 Cron |
 

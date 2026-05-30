@@ -366,3 +366,40 @@
 - 线上 `/api/product-performance?range=7d&date=2026-05-29&limit=3` 返回 Top SKU：`1A00200181`、`1A00800007`、`1A00800022`，并包含订单数、件数、销售额、Top 渠道、浏览、加购和 AI 访问。
 - 已推送 GitHub `main`；GitHub Pages 的 `app.js` 已确认包含 `/api/sync-health`、`/api/attribution-anomalies`、`/api/product-performance`，`index.html` 已确认包含 `syncHealthSection`、`attributionAnomalySection`、`productPerformanceSection`。
 - 本地没有可用 Playwright/Browser 自动化运行时，因此未做浏览器截图验证；前端已通过 `node --check app.js`，线上 API 已确认可返回真实数据。
+
+### 归因闭环、订单诊断和商品目录优化
+
+修改文件：
+- `src/worker.js`
+- `app.js`
+- `index.html`
+- `schema.sql`
+- `migrations/2026-05-30-attribution-closure.sql`
+- `README.md`
+- `DEPLOYMENT-GUIDE.md`
+- `PROJECT-LOG.md`
+
+原因：
+- 深度自查后确认，仅展示 Other / No Conversion Details 明细还不够，需要能标记处理状态、查看单订单证据链、用规则批量回填明确来源，并把这些内容推送到飞书。
+- 商品/SKU 看板需要把 Shopify 订单 line_items、Pixel 商品事件和 AI 商品兴趣更稳定地串起来；如果只靠 SKU 或标题，历史数据容易匹配不完整。
+- 默认归因规则必须谨慎，不能把已经明确的 Facebook、Google、Email 等正常渠道误改。
+
+内容：
+- 新增 `attribution_rules`、`order_attribution_overrides`、`product_catalog` 三张表；`product_catalog` 使用 `catalog_key` 做稳定唯一键，避免只有标题或只有 SKU 的记录互相覆盖。
+- 新增 `GET /api/attribution-rules`、`POST /api/attribution-rules`、`POST /api/attribution-rules/apply`、`POST /api/attribution-anomalies/status`、`GET /api/order-diagnostics`、`POST /api/product-catalog/backfill`。
+- 归因异常明细增加 `handling_status`、`effective_source`、`suggested_rule`、规则数量和 open 状态统计；订单诊断接口返回原始归因、有效归因、来源信号、排查建议、商品行、相关 Pixel 事件和 catalog 匹配。
+- 前端异常归因表新增状态、命中规则和“详情”按钮，并新增归因规则表；详情面板展示“问题 / 排查 / 修复 / 商品 / Pixel 与 Catalog 证据”。
+- Feishu 日报新增“今日执行摘要”，并把归因异常 Top、规则建议、商品/SKU 经营分析、AI 商品兴趣和 Shopify 智能体总结一起推送。
+- 默认规则只在弱归因或异常归因订单上生效；AI Referral 规则允许捕获明显 AI 来源，避免误伤正常渠道。
+
+验证：
+- 本地 `node --check src/worker.js` 通过。
+- 本地 `node --check app.js` 通过。
+- 本地 `npx wrangler d1 execute thermal-master-db --local --file=migrations/2026-05-30-attribution-closure.sql` 通过，12 条 SQL 成功执行。
+- 远端 `npx wrangler d1 execute thermal-master-db --remote --file=migrations/2026-05-30-attribution-closure.sql` 失败：Cloudflare `Invalid access token [code: 9109]`。
+- 远端 `npx wrangler deploy` 失败：Cloudflare `Invalid access token [code: 9109]`。
+- 后续需要刷新 Cloudflare/Wrangler 登录后，再执行远端 D1 migration、Worker deploy，并用线上接口复核 `/api/attribution-rules`、`/api/attribution-anomalies`、`/api/order-diagnostics`、`/api/product-performance`、`/api/sync-health`。
+
+未解决事项：
+- `POST /api/attribution-rules/apply` 和 `POST /api/product-catalog/backfill` 需要 `API_WRITE_TOKEN`；如果没有 token，只能先验证只读接口，不能手动触发批量回填。
+- 当前本机 Wrangler 远端 access token 已失效，需要重新 `wrangler login` 或更新 Cloudflare API token。

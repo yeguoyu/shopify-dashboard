@@ -488,6 +488,23 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
+.mini-muted {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+.mini-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.mini-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 @media (max-width: 768px) {
   .analysis-grid { grid-template-columns: 1fr; }
@@ -818,19 +835,35 @@ body {
     <div class="section-header">
       <div class="section-title">归因异常订单明细</div>
       <div class="section-note">
-        Other <span id="anomalyOtherCount">0</span> · No Conversion Details <span id="anomalyNoConversionCount">0</span> · 合计 <span id="anomalyTotalOrders">0</span> / <span id="anomalyTotalRevenue">$0</span>
+        Open <span id="anomalyOpenCount">0</span> · Rules <span id="anomalyRulesCount">0</span> · Other <span id="anomalyOtherCount">0</span> · No Conversion Details <span id="anomalyNoConversionCount">0</span> · 合计 <span id="anomalyTotalOrders">0</span> / <span id="anomalyTotalRevenue">$0</span>
       </div>
     </div>
     <div class="panel">
       <div class="table-scroll">
         <table class="data-table">
           <thead>
-            <tr><th>订单</th><th>异常类型</th><th>金额</th><th>有效渠道</th><th>来源信号</th><th>问题判断</th><th>修复排查</th></tr>
+            <tr><th>订单</th><th>状态</th><th>异常类型</th><th>金额</th><th>有效渠道</th><th>来源信号</th><th>问题判断</th><th>命中规则</th><th>详情</th></tr>
           </thead>
           <tbody id="attributionAnomalyBody">
-            <tr><td colspan="7" style="text-align:center;opacity:0.5">加载中...</td></tr>
+            <tr><td colspan="9" style="text-align:center;opacity:0.5">加载中...</td></tr>
           </tbody>
         </table>
+      </div>
+      <div id="orderDiagnosticsPanel" style="margin-top:14px;">
+        <div class="analysis-empty">点击异常订单的“详情”查看排查链路。</div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="analysis-title">归因规则</div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr><th>优先级</th><th>规则</th><th>匹配</th><th>Pattern</th><th>目标渠道</th></tr>
+            </thead>
+            <tbody id="attributionRuleBody">
+              <tr><td colspan="5" style="text-align:center;opacity:0.5">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>

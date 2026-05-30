@@ -156,6 +156,61 @@ CREATE INDEX IF NOT EXISTS idx_agent_catalog_logs_requested ON agent_catalog_log
 CREATE INDEX IF NOT EXISTS idx_agent_catalog_logs_agent ON agent_catalog_logs(agent_name);
 CREATE INDEX IF NOT EXISTS idx_agent_catalog_logs_sku ON agent_catalog_logs(sku);
 
+-- Rule-based attribution cleanup for Other / No Conversion Details.
+CREATE TABLE IF NOT EXISTS attribution_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  priority INTEGER DEFAULT 100,
+  match_field TEXT DEFAULT 'all',
+  match_type TEXT DEFAULT 'contains',
+  pattern TEXT NOT NULL,
+  target_channel TEXT NOT NULL,
+  target_campaign TEXT DEFAULT '',
+  status TEXT DEFAULT 'ACTIVE',
+  notes TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attribution_rules_status ON attribution_rules(status);
+CREATE INDEX IF NOT EXISTS idx_attribution_rules_priority ON attribution_rules(priority);
+
+-- Per-order attribution handling state and manual overrides.
+CREATE TABLE IF NOT EXISTS order_attribution_overrides (
+  order_id TEXT PRIMARY KEY,
+  status TEXT DEFAULT 'open',
+  override_channel TEXT DEFAULT '',
+  override_campaign TEXT DEFAULT '',
+  reason TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  rule_id INTEGER,
+  updated_by TEXT DEFAULT 'dashboard',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_attr_override_status ON order_attribution_overrides(status);
+CREATE INDEX IF NOT EXISTS idx_order_attr_override_rule ON order_attribution_overrides(rule_id);
+
+-- Product id / variant id / SKU mapping used to join Pixel interest with Shopify order sales.
+CREATE TABLE IF NOT EXISTS product_catalog (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  catalog_key TEXT UNIQUE NOT NULL,
+  product_id TEXT DEFAULT '',
+  variant_id TEXT DEFAULT '',
+  sku TEXT DEFAULT '',
+  product_title TEXT DEFAULT '',
+  source TEXT DEFAULT '',
+  first_seen_at TEXT DEFAULT (datetime('now')),
+  last_seen_at TEXT DEFAULT (datetime('now')),
+  raw_data TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_catalog_key ON product_catalog(catalog_key);
+CREATE INDEX IF NOT EXISTS idx_product_catalog_product ON product_catalog(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_catalog_variant ON product_catalog(variant_id);
+CREATE INDEX IF NOT EXISTS idx_product_catalog_sku ON product_catalog(sku);
+
 -- Refunds from Shopify refund webhooks.
 CREATE TABLE IF NOT EXISTS refunds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
