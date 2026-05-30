@@ -324,3 +324,44 @@
 
 未解决事项：
 - fallback 只能展示 Pixel 捕获到的 AI 来源商品事件，SKU 字段仍可能为空；真实 SKU 级 Catalog API logs 仍需要后续在商品/catalog API 访问入口写入 `agent_catalog_logs`。
+
+### 新增同步健康、归因异常明细和商品/SKU 分析
+
+修改文件：
+- `src/worker.js`
+- `app.js`
+- `index.html`
+- `shopify-custom-pixel.js`
+- `schema.sql`
+- `migrations/2026-05-30-pixel-product-sku.sql`
+- `README.md`
+- `DEPLOYMENT-GUIDE.md`
+- `PROJECT-LOG.md`
+
+原因：
+- 自查后确认广告花费暂时不处理，但 `Other + No Conversion Details` 7 天合计已有 37 单 / `$16,987.99`，金额足够大，需要在看板和飞书里给出可执行的排查明细。
+- 当前 Pending Attribution 已清零，继续重复 backfill 不是主要解决办法；重点应转向 UTM/referrer/landing page/Pixel 链路和渠道映射排查。
+- Catalog fallback 已能展示 AI 商品访问，但历史 Pixel 商品事件缺 SKU 字段；需要先补上新事件的 SKU 捕获，同时保留旧数据兼容。
+- 用户要求 AI 总结、具体问题、修复排查方法，以及这些内容都同步到飞书。
+
+内容：
+- 新增 `GET /api/sync-health`，返回最新订单日期、最新 Pixel 日期、Pending Attribution、Other/No Conversion Details 异常规模、Pixel SKU 字段状态、Feishu/Webhook 配置状态和健康检查项。
+- 新增 `GET /api/attribution-anomalies`，列出 Other / No Conversion Details 订单明细，包含金额、有效渠道、UTM/referrer/source_name、问题判断、排查项和修复建议。
+- 新增 `GET /api/product-performance`，从 Shopify `line_items` 汇总商品/SKU 的订单数、件数、销售额、Top 渠道，并结合 Pixel 商品事件展示浏览、加购和 AI 商品兴趣。
+- 前端新增三个看板模块：`数据同步健康`、`归因异常订单明细`、`商品 / SKU 经营分析`，让问题和修复方法不只停留在摘要里。
+- 飞书日报新增 `数据同步健康`、`归因异常订单 Top`、`商品 / SKU 经营分析`、`AI 商品兴趣` 四块内容，和原有 AI 诊断/Shopify 智能体总结一起推送。
+- `pixel_events` 新增 `product_sku` 字段和索引；`shopify-custom-pixel.js` 在 `product_viewed`、`product_added_to_cart` 上报 SKU。
+- Worker 的 Pixel 写入对 `product_sku` 做兼容 fallback：如果远端表尚未迁移，会自动回退旧字段写入，避免事件丢失。
+- README 和部署指南补充新接口、SKU 迁移、验证命令和检查清单。
+
+验证：
+- `node --check src/worker.js` 通过。
+- `node --check app.js` 通过。
+- `node --check shopify-custom-pixel.js` 通过。
+- `git diff --check` 通过，仅有 Windows CRLF 提示。
+- 线上 D1 已执行 `migrations/2026-05-30-pixel-product-sku.sql`，成功处理 2 条 SQL，`pixel_events.product_sku` 已启用。
+- `npx wrangler deploy` 成功，Worker Version ID: `cbf98a5d-cfb4-4705-9c54-26d50aed8f5e`。
+- 线上 `/api/sync-health?range=7d&date=2026-05-29` 返回 `status=watch`、`pending_attribution_count=0`、`product_sku_enabled=true`、异常归因 `56` 单 / `$23046.93`。
+- 线上 `/api/attribution-anomalies?range=7d&date=2026-05-29&limit=3` 返回 Top 异常订单：`#22315` 已识别为 `入口信号缺失 / high`；`#22269` 已识别为 `Shopify 无 journey，但订单 URL 有 UTM`；`#22221` 已识别为 `Last touch 已识别，但主渠道仍是 Other`。
+- 线上 `/api/product-performance?range=7d&date=2026-05-29&limit=3` 返回 Top SKU：`1A00200181`、`1A00800007`、`1A00800022`，并包含订单数、件数、销售额、Top 渠道、浏览、加购和 AI 访问。
+- 本地没有可用 Playwright/Browser 自动化运行时，因此未做浏览器截图验证；前端已通过 `node --check app.js`，线上 API 已确认可返回真实数据。

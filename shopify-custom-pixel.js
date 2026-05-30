@@ -77,6 +77,7 @@ analytics.subscribe('product_viewed', (event) => {
   sendEvent('product_viewed', {
     product_id: product?.product?.id || '',
     product_title: product?.product?.title || '',
+    product_sku: product?.sku || product?.product?.sku || '',
     product_price: product?.price?.amount || 0,
     variant_id: product?.id || '',
   });
@@ -88,6 +89,7 @@ analytics.subscribe('product_added_to_cart', (event) => {
   sendEvent('product_added_to_cart', {
     product_id: item?.merchandise?.product?.id || '',
     product_title: item?.merchandise?.product?.title || '',
+    product_sku: item?.merchandise?.sku || item?.merchandise?.product?.sku || '',
     product_price: item?.merchandise?.price?.amount || 0,
     variant_id: item?.merchandise?.id || '',
     quantity: item?.quantity || 1,

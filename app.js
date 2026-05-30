@@ -62,6 +62,27 @@ function fetchAgenticSummary() {
   });
 }
 
+function fetchSyncHealth() {
+  return fetch(API_BASE + '/api/sync-health' + getRangeQuery()).then(function (r) {
+    if (!r.ok) throw new Error('Sync health API ' + r.status);
+    return r.json();
+  });
+}
+
+function fetchAttributionAnomalies() {
+  return fetch(API_BASE + '/api/attribution-anomalies' + getRangeQuery()).then(function (r) {
+    if (!r.ok) throw new Error('Attribution anomalies API ' + r.status);
+    return r.json();
+  });
+}
+
+function fetchProductPerformance() {
+  return fetch(API_BASE + '/api/product-performance' + getRangeQuery()).then(function (r) {
+    if (!r.ok) throw new Error('Product performance API ' + r.status);
+    return r.json();
+  });
+}
+
 // ============================================
 // Formatters
 // ============================================
@@ -751,6 +772,136 @@ function renderAgenticCatalogLogs(rows) {
   }).join('') || '<tr><td colspan="4" style="text-align:center;opacity:0.5">暂无 Catalog API logs</td></tr>';
 }
 
+// ============================================
+// Sync Health / Attribution Anomalies / Product
+// ============================================
+
+function healthStatusLabel(status) {
+  if (status === 'action_required') return '需要处理';
+  if (status === 'watch') return '观察中';
+  return '正常';
+}
+
+function renderSyncHealth(data) {
+  if (!data) return;
+
+  setText('syncHealthStatus', healthStatusLabel(data.status));
+  setText('syncLatestOrder', data.latest_order_date || '-');
+  setText('syncLatestPixel', data.latest_pixel_date || '-');
+  setText('syncPendingAttribution', fmtNum(data.pending_attribution_count || 0));
+  setText('syncAnomalyOrders', fmtNum(data.attribution_anomalies ? data.attribution_anomalies.orders : 0));
+  setText('syncAnomalyRevenue', fmtMoney(data.attribution_anomalies ? data.attribution_anomalies.revenue : 0));
+  setText('syncSkuEnabled', data.product_sku_enabled ? '已启用' : '待迁移/待新事件');
+
+  var statusEl = document.getElementById('syncHealthStatus');
+  if (statusEl) {
+    statusEl.className = 'health-status ' + (data.status || 'ok');
+  }
+
+  var list = document.getElementById('syncHealthChecks');
+  if (!list) return;
+
+  var checks = (data.checks || []).slice(0, 6);
+
+  if (!checks.length) {
+    list.innerHTML = '<div class="analysis-empty">暂无需要处理的数据同步问题</div>';
+    return;
+  }
+
+  list.innerHTML = checks.map(function (row) {
+    return '<div class="health-check ' + escHtml(row.severity || 'info') + '">' +
+      '<strong>' + escHtml(row.title || '-') + '</strong>' +
+      '<span>' + escHtml(row.detail || '-') + '</span>' +
+      '</div>';
+  }).join('');
+}
+
+function renderAttributionAnomalies(data) {
+  var tbody = document.getElementById('attributionAnomalyBody');
+  if (!tbody) return;
+
+  var totals = data && data.totals ? data.totals : {};
+
+  setText('anomalyTotalOrders', fmtNum(totals.orders || 0));
+  setText('anomalyTotalRevenue', fmtMoney(totals.revenue || 0));
+  setText('anomalyOtherCount', fmtNum(totals.other_orders || 0));
+  setText('anomalyNoConversionCount', fmtNum(totals.no_conversion_orders || 0));
+
+  var rows = data && data.orders ? data.orders.slice(0, 12) : [];
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;opacity:0.5">暂无 Other / No Conversion Details 异常订单</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(function (row) {
+    var source = row.utm_source || row.referring_site || row.source_name || row.landing_site || '-';
+    var diagnosis = row.diagnosis || {};
+
+    return '<tr>' +
+      '<td>' + escHtml(row.order_name || row.order_id || '-') + '</td>' +
+      '<td>' + escHtml(row.bucket_label || '-') + '</td>' +
+      '<td>' + fmtMoney(row.total_price || 0) + '</td>' +
+      '<td>' + escHtml(row.effective_channel || '-') + '</td>' +
+      '<td style="white-space:normal;min-width:180px;">' + escHtml(String(source).slice(0, 120)) + '</td>' +
+      '<td style="white-space:normal;min-width:220px;"><strong>' + escHtml(diagnosis.title || '-') + '</strong><br>' + escHtml(diagnosis.summary || '-') + '</td>' +
+      '<td style="white-space:normal;min-width:240px;">' + escHtml((diagnosis.fixes || []).slice(0, 2).join('；') || '-') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function renderProductPerformance(data) {
+  var tbody = document.getElementById('productPerformanceBody');
+  var aiBody = document.getElementById('aiProductInterestBody');
+  if (!tbody) return;
+
+  var totals = data && data.totals ? data.totals : {};
+
+  setText('productCount', fmtNum(totals.product_count || 0));
+  setText('productRevenue', fmtMoney(totals.revenue || 0));
+  setText('productUnits', fmtNum(totals.units || 0));
+  setText('productSkuCoverage', fmtPct(totals.sku_coverage_pct || 0));
+
+  var rows = data && data.products ? data.products.slice(0, 12) : [];
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;opacity:0.5">暂无商品 / SKU 销售数据</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map(function (row) {
+      return '<tr>' +
+        '<td>' + escHtml(row.sku || '-') + '</td>' +
+        '<td style="white-space:normal;min-width:220px;">' + escHtml(row.product_title || '-') + '</td>' +
+        '<td>' + fmtNum(row.orders || 0) + '</td>' +
+        '<td>' + fmtNum(row.units || 0) + '</td>' +
+        '<td>' + fmtMoney(row.revenue || 0) + '</td>' +
+        '<td>' + escHtml(row.top_channel || '-') + '</td>' +
+        '<td>' + fmtNum(row.views || 0) + '</td>' +
+        '<td>' + fmtNum(row.add_to_cart || 0) + '</td>' +
+        '<td>' + fmtNum(row.ai_requests || 0) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  if (!aiBody) return;
+
+  var aiRows = data && data.ai_interest ? data.ai_interest.slice(0, 8) : [];
+
+  if (!aiRows.length) {
+    aiBody.innerHTML = '<tr><td colspan="5" style="text-align:center;opacity:0.5">暂无 AI 商品兴趣数据</td></tr>';
+    return;
+  }
+
+  aiBody.innerHTML = aiRows.map(function (row) {
+    return '<tr>' +
+      '<td>' + escHtml(row.sku || row.product_id || '-') + '</td>' +
+      '<td style="white-space:normal;min-width:220px;">' + escHtml(row.product_title || '-') + '</td>' +
+      '<td>' + fmtNum(row.ai_requests || 0) + '</td>' +
+      '<td>' + fmtNum(row.views || 0) + '</td>' +
+      '<td>' + fmtNum(row.add_to_cart || 0) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
 function findTrendInsight(channel) {
   if (!_analysisSummary) return null;
 
@@ -863,6 +1014,18 @@ function loadAllData() {
       fetchAgenticSummary().catch(function (e) {
         console.warn('Agentic summary fetch failed:', e);
         return null;
+      }),
+      fetchSyncHealth().catch(function (e) {
+        console.warn('Sync health fetch failed:', e);
+        return null;
+      }),
+      fetchAttributionAnomalies().catch(function (e) {
+        console.warn('Attribution anomalies fetch failed:', e);
+        return null;
+      }),
+      fetchProductPerformance().catch(function (e) {
+        console.warn('Product performance fetch failed:', e);
+        return null;
       })
     ]);
   }).then(function (results) {
@@ -870,6 +1033,9 @@ function loadAllData() {
     var channels = results[1];
     var funnel = results[2];
     var agentic = results[3];
+    var syncHealth = results[4];
+    var anomalies = results[5];
+    var productPerformance = results[6];
 
     if (dashboard) {
       updateKPIs(dashboard.kpi);
@@ -905,6 +1071,18 @@ function loadAllData() {
 
     if (agentic) {
       renderAgenticSummary(agentic);
+    }
+
+    if (syncHealth) {
+      renderSyncHealth(syncHealth);
+    }
+
+    if (anomalies) {
+      renderAttributionAnomalies(anomalies);
+    }
+
+    if (productPerformance) {
+      renderProductPerformance(productPerformance);
     }
 
     if (channels) {

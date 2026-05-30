@@ -38,6 +38,9 @@ export default {
       if (path === '/api/data-status' && request.method === 'GET')
         return handleDataStatus(env, corsHeaders);
 
+      if (path === '/api/sync-health' && request.method === 'GET')
+        return handleSyncHealth(request, env, corsHeaders);
+
       if (path === '/api/dashboard' && request.method === 'GET')
         return handleDashboard(request, env, corsHeaders);
 
@@ -49,6 +52,12 @@ export default {
 
       if (path === '/api/agentic-summary' && request.method === 'GET')
         return handleAgenticSummary(request, env, corsHeaders);
+
+      if (path === '/api/attribution-anomalies' && request.method === 'GET')
+        return handleAttributionAnomalies(request, env, corsHeaders);
+
+      if (path === '/api/product-performance' && request.method === 'GET')
+        return handleProductPerformance(request, env, corsHeaders);
 
       if (path === '/api/order-journey' && request.method === 'GET')
       return handleOrderJourney(request, env, corsHeaders);
@@ -283,6 +292,39 @@ function addDaysToDateStr(dateStr, days) {
   return y + '-' + m + '-' + day;
 }
 
+function dateDiffDays(laterDateStr, earlierDateStr) {
+  if (!isValidDateStr(laterDateStr) || !isValidDateStr(earlierDateStr)) {
+    return null;
+  }
+
+  const later = new Date(laterDateStr + 'T00:00:00Z').getTime();
+  const earlier = new Date(earlierDateStr + 'T00:00:00Z').getTime();
+
+  return Math.round((later - earlier) / 86400000);
+}
+
+function normalizeProductKey(sku, title, productId) {
+  const cleanSku = String(sku || '').trim().toLowerCase();
+  const cleanTitle = String(title || '').trim().toLowerCase();
+  const cleanProductId = String(productId || '').trim().toLowerCase();
+
+  if (cleanSku) return 'sku:' + cleanSku;
+  if (cleanTitle) return 'title:' + cleanTitle;
+  if (cleanProductId) return 'product:' + cleanProductId;
+
+  return '';
+}
+
+async function tableHasColumn(env, tableName, columnName) {
+  try {
+    const rows = await env.DB.prepare(`PRAGMA table_info(${tableName})`).all();
+
+    return (rows.results || []).some((row) => row.name === columnName);
+  } catch (err) {
+    return false;
+  }
+}
+
 function getRangeWindow(url) {
   const rawRange = String(url.searchParams.get('range') || '').toLowerCase();
 
@@ -388,6 +430,147 @@ async function handleDataStatus(env, cors) {
   }, 200, cors);
 }
 
+async function buildSyncHealth(env, rangeWindow) {
+  const shopifyToday = todayStr();
+
+  const latestOrder = await env.DB.prepare(
+    `SELECT
+      MAX(shopify_created_at) as latest_order_at,
+      MAX(substr(shopify_created_at, 1, 10)) as latest_order_date,
+      COUNT(*) as total_orders
+     FROM orders
+     WHERE shopify_created_at IS NOT NULL
+       AND shopify_created_at != ''
+       AND COALESCE(total_price, 0) > 0`
+  ).first();
+
+  const latestPixel = await env.DB.prepare(
+    `SELECT
+      MAX(timestamp) as latest_pixel_at,
+      MAX(substr(timestamp, 1, 10)) as latest_pixel_date,
+      COUNT(*) as total_pixel_events
+     FROM pixel_events
+     WHERE timestamp IS NOT NULL
+       AND timestamp != ''`
+  ).first();
+
+  const pending = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt
+     FROM orders
+     WHERE first_touch_channel IS NULL
+        OR last_touch_channel IS NULL
+        OR first_touch_channel = 'Pending Attribution'
+        OR last_touch_channel = 'Pending Attribution'`
+  ).first();
+
+  const anomalies = await buildAttributionAnomalies(env, rangeWindow, 5);
+  const productSkuEnabled = await tableHasColumn(env, 'pixel_events', 'product_sku');
+  const orderLagDays = latestOrder?.latest_order_date
+    ? Math.max(0, dateDiffDays(shopifyToday, latestOrder.latest_order_date))
+    : null;
+  const pixelLagDays = latestPixel?.latest_pixel_date
+    ? Math.max(0, dateDiffDays(shopifyToday, latestPixel.latest_pixel_date))
+    : null;
+
+  const checks = [];
+
+  if (!latestOrder?.latest_order_date) {
+    checks.push({
+      severity: 'high',
+      title: '订单数据为空',
+      detail: 'orders 表没有可用订单，请先检查 Shopify 订单同步和 webhook。'
+    });
+  } else if (orderLagDays !== null && orderLagDays > 1) {
+    checks.push({
+      severity: 'medium',
+      title: '订单同步可能滞后',
+      detail: `最新订单日期 ${latestOrder.latest_order_date}，距离 Shopify 今日 ${shopifyToday} 已 ${orderLagDays} 天。`
+    });
+  }
+
+  if (!latestPixel?.latest_pixel_date) {
+    checks.push({
+      severity: 'medium',
+      title: 'Pixel 数据为空',
+      detail: 'pixel_events 表没有事件，需检查 Shopify Custom Pixel 是否仍在运行。'
+    });
+  } else if (pixelLagDays !== null && pixelLagDays > 1) {
+    checks.push({
+      severity: 'medium',
+      title: 'Pixel 事件可能滞后',
+      detail: `最新 Pixel 日期 ${latestPixel.latest_pixel_date}，距离 Shopify 今日 ${shopifyToday} 已 ${pixelLagDays} 天。`
+    });
+  }
+
+  if ((pending?.cnt || 0) > 0) {
+    checks.push({
+      severity: 'high',
+      title: '仍有订单未回填归因',
+      detail: `当前 Pending Attribution ${pending.cnt} 单，需要继续执行 Shopify customerJourney 回填。`
+    });
+  }
+
+  if (anomalies.totals.orders > 0) {
+    checks.push({
+      severity: 'medium',
+      title: '存在 Other / No Conversion Details',
+      detail: `${anomalies.totals.orders} 单 / ${shortMoney(anomalies.totals.revenue)} 需要抽查 UTM、referrer、landing page 和 Pixel 链路。`
+    });
+  }
+
+  if (!productSkuEnabled) {
+    checks.push({
+      severity: 'info',
+      title: 'Pixel SKU 字段尚未启用',
+      detail: '历史商品事件只有 product_id/title；执行 SKU 迁移并更新 Custom Pixel 后，新事件会带 product_sku。'
+    });
+  }
+
+  if (!env.FEISHU_WEBHOOK) {
+    checks.push({
+      severity: 'medium',
+      title: '飞书 Webhook 未配置',
+      detail: '自动日报不会发送到飞书，需要配置 FEISHU_WEBHOOK。'
+    });
+  }
+
+  const hasHigh = checks.some((row) => row.severity === 'high');
+  const hasMedium = checks.some((row) => row.severity === 'medium');
+
+  return {
+    range: rangeWindow.range,
+    start: rangeWindow.start,
+    end: rangeWindow.end,
+    shopify_timezone: SHOPIFY_TIMEZONE,
+    shopify_today: shopifyToday,
+    checked_at: new Date().toISOString(),
+    status: hasHigh ? 'action_required' : hasMedium ? 'watch' : 'ok',
+    latest_order_at: latestOrder?.latest_order_at || null,
+    latest_order_date: latestOrder?.latest_order_date || null,
+    latest_pixel_at: latestPixel?.latest_pixel_at || null,
+    latest_pixel_date: latestPixel?.latest_pixel_date || null,
+    total_orders: latestOrder?.total_orders || 0,
+    total_pixel_events: latestPixel?.total_pixel_events || 0,
+    order_lag_days: orderLagDays,
+    pixel_lag_days: pixelLagDays,
+    pending_attribution_count: pending?.cnt || 0,
+    attribution_anomalies: anomalies.totals,
+    product_sku_enabled: productSkuEnabled,
+    shopify_configured: Boolean(env.SHOPIFY_STORE && env.SHOPIFY_ADMIN_TOKEN),
+    feishu_configured: Boolean(env.FEISHU_WEBHOOK),
+    api_write_protected: Boolean(env.API_WRITE_TOKEN),
+    checks
+  };
+}
+
+async function handleSyncHealth(request, env, cors) {
+  const url = new URL(request.url);
+  const rangeWindow = getRangeWindow(url);
+  const health = await buildSyncHealth(env, rangeWindow);
+
+  return json(health, 200, cors);
+}
+
 // ============================================
 // Pixel Event
 // ============================================
@@ -395,37 +578,78 @@ async function handleDataStatus(env, cors) {
 async function handlePixelEvent(request, env, cors) {
   const body = await request.json();
 
-  await env.DB.prepare(
-    `INSERT INTO pixel_events (
-      event_name, timestamp, session_id, page_url, referrer,
-      utm_source, utm_medium, utm_campaign, utm_content, utm_term,
-      product_id, product_title, product_price, variant_id, quantity,
-      cart_total, order_id, order_total, currency, customer_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
-      v(body.event_name),
-      v(body.timestamp),
-      v(body.session_id),
-      v(body.page_url),
-      v(body.referrer),
-      v(body.utm_source),
-      v(body.utm_medium),
-      v(body.utm_campaign),
-      v(body.utm_content),
-      v(body.utm_term),
-      v(body.product_id),
-      v(body.product_title),
-      v(body.product_price),
-      v(body.variant_id),
-      v(body.quantity),
-      v(body.cart_total),
-      v(body.order_id),
-      v(body.order_total),
-      v(body.currency),
-      v(body.customer_id)
+  const commonValues = [
+    v(body.event_name),
+    v(body.timestamp),
+    v(body.session_id),
+    v(body.page_url),
+    v(body.referrer),
+    v(body.utm_source),
+    v(body.utm_medium),
+    v(body.utm_campaign),
+    v(body.utm_content),
+    v(body.utm_term),
+    v(body.product_id),
+    v(body.product_title),
+    v(body.product_sku),
+    v(body.product_price),
+    v(body.variant_id),
+    v(body.quantity),
+    v(body.cart_total),
+    v(body.order_id),
+    v(body.order_total),
+    v(body.currency),
+    v(body.customer_id)
+  ];
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO pixel_events (
+        event_name, timestamp, session_id, page_url, referrer,
+        utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+        product_id, product_title, product_sku, product_price, variant_id, quantity,
+        cart_total, order_id, order_total, currency, customer_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run();
+      .bind(...commonValues)
+      .run();
+  } catch (err) {
+    if (!String(err.message || '').includes('product_sku')) {
+      throw err;
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO pixel_events (
+        event_name, timestamp, session_id, page_url, referrer,
+        utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+        product_id, product_title, product_price, variant_id, quantity,
+        cart_total, order_id, order_total, currency, customer_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        commonValues[0],
+        commonValues[1],
+        commonValues[2],
+        commonValues[3],
+        commonValues[4],
+        commonValues[5],
+        commonValues[6],
+        commonValues[7],
+        commonValues[8],
+        commonValues[9],
+        commonValues[10],
+        commonValues[11],
+        commonValues[13],
+        commonValues[14],
+        commonValues[15],
+        commonValues[16],
+        commonValues[17],
+        commonValues[18],
+        commonValues[19],
+        commonValues[20]
+      )
+      .run();
+  }
 
   return json({ ok: true }, 200, cors);
 }
@@ -3108,6 +3332,12 @@ async function queryAgenticCatalogLogs(env, startDate, endDate) {
   }
 
   try {
+    const hasProductSku = await tableHasColumn(env, 'pixel_events', 'product_sku');
+    const productSkuSelect = hasProductSku
+      ? "COALESCE(product_sku, '') as product_sku,"
+      : "'' as product_sku,";
+    const productSkuGroup = hasProductSku ? ', product_sku' : '';
+
     const pixelRows = await env.DB.prepare(
       `SELECT
         COALESCE(utm_source, '') as source,
@@ -3115,6 +3345,7 @@ async function queryAgenticCatalogLogs(env, startDate, endDate) {
         COALESCE(referrer, '') as referrer,
         COALESCE(product_id, '') as product_id,
         COALESCE(product_title, '') as product_title,
+        ${productSkuSelect}
         COUNT(*) as requests,
         MAX(timestamp) as last_requested_at
        FROM pixel_events
@@ -3122,7 +3353,7 @@ async function queryAgenticCatalogLogs(env, startDate, endDate) {
          AND DATE(timestamp) >= ?
          AND DATE(timestamp) <= ?
          AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '')
-       GROUP BY source, campaign, referrer, product_id, product_title
+       GROUP BY source, campaign, referrer, product_id, product_title${productSkuGroup}
        ORDER BY requests DESC
        LIMIT 500`
     ).bind(startDate, endDate).all();
@@ -3138,7 +3369,7 @@ async function queryAgenticCatalogLogs(env, startDate, endDate) {
 
       addCatalogRow({
         agent_name: detectAgenticPlatformFromText(rowText),
-        sku: '',
+        sku: row.product_sku || '',
         product_id: row.product_id || '',
         product_title: row.product_title || '',
         requests: safeNumber(row.requests || 0),
@@ -3268,6 +3499,569 @@ async function handleAgenticSummary(request, env, cors) {
 // ============================================
 // Channels（渠道归因 — 增加 ROI per channel）
 // ============================================
+
+// ============================================
+// Attribution Anomalies
+// ============================================
+
+function isAttributionAnomalyValue(value) {
+  const normalized = normalizeChannelName(value || '').toLowerCase();
+
+  return normalized === 'other' || normalized === 'no conversion details';
+}
+
+function getAttributionAnomalyBucket(row) {
+  const values = [
+    row.channel,
+    row.first_touch_channel,
+    row.last_touch_channel
+  ];
+
+  if (values.some((value) => normalizeChannelName(value || '') === 'No Conversion Details')) {
+    return 'no_conversion_details';
+  }
+
+  if (values.some((value) => normalizeChannelName(value || '') === 'Other')) {
+    return 'other';
+  }
+
+  return 'unknown';
+}
+
+function isMeaningfulSourceSignal(value) {
+  const text = String(value || '').trim().toLowerCase();
+
+  return Boolean(text && !['none', 'null', 'undefined', '(not set)', 'not set'].includes(text));
+}
+
+function hasOrderSourceSignal(row) {
+  return [
+    row.utm_source,
+    row.utm_medium,
+    row.utm_campaign,
+    row.landing_site,
+    row.referring_site,
+    row.source_name,
+    row.first_touch_campaign,
+    row.last_touch_campaign
+  ].some(isMeaningfulSourceSignal);
+}
+
+function isInternalReferral(value) {
+  const text = String(value || '').toLowerCase();
+
+  return (
+    text.includes('thermalmaster.com') ||
+    text.includes('thermalmaster.myshopify.com') ||
+    text.includes('checkout.shopify.com') ||
+    text.includes('shop.app')
+  );
+}
+
+function diagnoseAttributionAnomaly(row) {
+  const bucket = getAttributionAnomalyBucket(row);
+  const hasUtm = [row.utm_source, row.utm_medium, row.utm_campaign].some(isMeaningfulSourceSignal);
+  const effectiveChannel = getOrderAttributionChannel(row);
+  const lastTouch = normalizeChannelName(row.last_touch_channel || '');
+  const firstTouch = normalizeChannelName(row.first_touch_channel || '');
+  const sourceText = [
+    row.utm_source,
+    row.utm_medium,
+    row.utm_campaign,
+    row.landing_site,
+    row.referring_site,
+    row.source_name,
+    row.first_touch_campaign,
+    row.last_touch_campaign
+  ].join(' ');
+
+  if (hasAgenticText(sourceText)) {
+    return {
+      severity: 'medium',
+      title: '疑似 AI / Agentic 来源未完全归类',
+      summary: '订单来源里出现 AI 平台信号，但主归因仍落在 Other 或 No Conversion Details。',
+      checks: [
+        '打开 /api/order-journey?order_id=' + row.order_id + ' 查看 Shopify journey moments。',
+        '检查 landing_site/referring_site 是否包含 ChatGPT、Gemini、Perplexity、Claude 等来源。',
+        '确认 classifyChannel 和 Shopify Agentic 检测规则是否覆盖该来源写法。'
+      ],
+      fixes: [
+        '把确认后的 AI 来源加入 AI/Agentic 归因映射。',
+        '后续 AI 推广链接统一添加 utm_source 与 utm_campaign。',
+        '对该订单做一次归因回填，确认 first/last touch 是否变化。'
+      ]
+    };
+  }
+
+  if (bucket === 'no_conversion_details' && hasUtm) {
+    return {
+      severity: 'medium',
+      title: 'Shopify 无 journey，但订单 URL 有 UTM',
+      summary: 'Shopify customerJourney 没返回 conversion details，但 landing/note attributes 里仍有可用 UTM。',
+      checks: [
+        '核对 landing_site、note_attributes、cart attributes 是否都写入了同一组 UTM。',
+        '打开订单 journey 接口确认 moments_count 是否为 0。',
+        '抽查对应 session_id 是否在 pixel_events 有 page_viewed -> checkout_completed 链路。'
+      ],
+      fixes: [
+        '确保 theme UTM snippet 在进入购物车前写入 cart attributes。',
+        '所有广告、KOL、邮件、AI 推荐链接统一带 utm_source / utm_medium / utm_campaign。',
+        '对高金额订单先按 UTM 人工归类，必要时补充映射规则。'
+      ]
+    };
+  }
+
+  if (bucket === 'other' && lastTouch && !isWeakAttributionChannel(lastTouch)) {
+    return {
+      severity: 'medium',
+      title: 'Last touch 已识别，但主渠道仍是 Other',
+      summary: `当前 Last Non-Click 可识别为 ${effectiveChannel}，需要确认 primary channel 是否应按 last touch 展示。`,
+      checks: [
+        '比较 channel、first_touch_channel、last_touch_channel 三个字段。',
+        '检查 first touch 是否被 Shopify 标成 Other，导致主渠道看起来不清晰。',
+        '打开订单 journey 查看 first/last touch 的 sourceDescription。'
+      ],
+      fixes: [
+        '看板主表继续使用 Last Non-Click 口径，异常表保留 raw channel 便于排查。',
+        '如果确认为新来源，把 source_name/referrer 写法加入 classifyChannel。',
+        '对同类订单批量回填后再观察 Other 是否下降。'
+      ]
+    };
+  }
+
+  if (
+    isInternalReferral(row.referring_site) ||
+    isInternalReferral(row.source_name) ||
+    isInternalReferral(row.utm_source)
+  ) {
+    return {
+      severity: 'info',
+      title: '疑似内部跳转或支付回跳来源',
+      summary: 'referrer/source_name 看起来来自站内、Shopify checkout 或 Shop App，可能不应算作真实获客来源。',
+      checks: [
+        '确认 referring_site/source_name 是否来自站内域名或 checkout。',
+        '查看 landing_site 是否为空，判断是否是直接进入结账或回跳。',
+        '检查支付、客服、订阅插件是否会覆盖 referrer。'
+      ],
+      fixes: [
+        '把明确的站内/支付回跳来源归为 Direct 或 Internal。',
+        '保留原始 source_name 方便后续审计。',
+        '新增外部推广时避免使用站内跳转短链丢失 UTM。'
+      ]
+    };
+  }
+
+  if (!hasOrderSourceSignal(row)) {
+    return {
+      severity: 'high',
+      title: '入口信号缺失',
+      summary: '订单没有 UTM、referrer、landing page、source_name，无法自动判断真实来源。',
+      checks: [
+        '检查 Shopify Custom Pixel 是否在落地页正常记录 page_viewed。',
+        '检查 theme UTM snippet 是否能把 UTM 写入 cart attributes。',
+        '检查是否有隐私/跳转/支付流程清空了 referrer 和 landing_site。'
+      ],
+      fixes: [
+        '先从高金额订单人工询源或结合客服记录补渠道。',
+        '修复 UTM 写入链路后，新增订单应能带上 landing/referrer。',
+        '对无法追溯的历史订单保留 Unknown/Other，不强行猜测。'
+      ]
+    };
+  }
+
+  return {
+    severity: 'medium',
+    title: bucket === 'no_conversion_details' ? 'No Conversion Details 待抽查' : 'Other 来源待归类',
+    summary: `first touch=${firstTouch || '-'}，last touch=${lastTouch || '-'}，effective=${effectiveChannel || '-'}。`,
+    checks: [
+      '打开订单 journey 接口检查 Shopify moments。',
+      '查看 raw_data.source_name、landing_site、referring_site 与 UTM。',
+      '确认该来源是否应加入渠道映射。'
+    ],
+    fixes: [
+      '把确认后的来源写入 classifyChannel / normalizeChannelName。',
+      '新推广链接统一 UTM 命名。',
+      '修复后观察 7d Other / No Conversion Details 是否下降。'
+    ]
+  };
+}
+
+async function buildAttributionAnomalies(env, rangeWindow, limit = 20) {
+  const rows = await env.DB.prepare(
+    `SELECT
+      order_id,
+      order_name,
+      shopify_created_at,
+      total_price,
+      channel,
+      first_touch_channel,
+      first_touch_campaign,
+      last_touch_channel,
+      last_touch_campaign,
+      utm_source,
+      utm_medium,
+      utm_campaign,
+      landing_site,
+      referring_site,
+      COALESCE(json_extract(raw_data, '$.source_name'), '') as source_name
+     FROM orders
+     WHERE substr(shopify_created_at, 1, 10) >= ?
+       AND substr(shopify_created_at, 1, 10) <= ?
+       AND (
+         COALESCE(channel, '') IN ('Other', 'No Conversion Details')
+         OR COALESCE(first_touch_channel, '') IN ('Other', 'No Conversion Details')
+         OR COALESCE(last_touch_channel, '') IN ('Other', 'No Conversion Details')
+       )
+     ORDER BY COALESCE(total_price, 0) DESC
+     LIMIT 5000`
+  ).bind(rangeWindow.start, rangeWindow.end).all();
+
+  const summary = {
+    other: { bucket: 'other', label: 'Other', orders: 0, revenue: 0 },
+    no_conversion_details: { bucket: 'no_conversion_details', label: 'No Conversion Details', orders: 0, revenue: 0 }
+  };
+
+  const orders = (rows.results || []).map((row) => {
+    const bucket = getAttributionAnomalyBucket(row);
+    const diagnosis = diagnoseAttributionAnomaly(row);
+    const effectiveChannel = getOrderAttributionChannel(row);
+
+    if (summary[bucket]) {
+      summary[bucket].orders += 1;
+      summary[bucket].revenue += safeNumber(row.total_price);
+    }
+
+    return {
+      order_id: row.order_id,
+      order_name: row.order_name || row.order_id,
+      shopify_created_at: row.shopify_created_at,
+      total_price: safeNumber(row.total_price),
+      bucket,
+      bucket_label: summary[bucket]?.label || 'Unknown',
+      channel: normalizeChannelName(row.channel || ''),
+      effective_channel: effectiveChannel,
+      first_touch_channel: normalizeChannelName(row.first_touch_channel || ''),
+      first_touch_campaign: row.first_touch_campaign || '',
+      last_touch_channel: normalizeChannelName(row.last_touch_channel || ''),
+      last_touch_campaign: row.last_touch_campaign || '',
+      utm_source: row.utm_source || '',
+      utm_medium: row.utm_medium || '',
+      utm_campaign: row.utm_campaign || '',
+      landing_site: row.landing_site || '',
+      referring_site: row.referring_site || '',
+      source_name: row.source_name || '',
+      diagnosis
+    };
+  });
+
+  const totals = {
+    orders: summary.other.orders + summary.no_conversion_details.orders,
+    revenue: summary.other.revenue + summary.no_conversion_details.revenue,
+    other_orders: summary.other.orders,
+    other_revenue: summary.other.revenue,
+    no_conversion_orders: summary.no_conversion_details.orders,
+    no_conversion_revenue: summary.no_conversion_details.revenue
+  };
+
+  return {
+    range: rangeWindow.range,
+    start: rangeWindow.start,
+    end: rangeWindow.end,
+    totals,
+    summary: Object.values(summary),
+    orders: orders.slice(0, limit)
+  };
+}
+
+async function handleAttributionAnomalies(request, env, cors) {
+  const url = new URL(request.url);
+  const rangeWindow = getRangeWindow(url);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20', 10), 50);
+  const result = await buildAttributionAnomalies(env, rangeWindow, limit);
+
+  return json(result, 200, cors);
+}
+
+// ============================================
+// Product / SKU Performance
+// ============================================
+
+function parseLineItems(rawLineItems) {
+  if (!rawLineItems) return [];
+
+  try {
+    const parsed = JSON.parse(rawLineItems);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+async function queryPixelProductRows(env, startDate, endDate) {
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT
+        event_name,
+        COALESCE(product_id, '') as product_id,
+        COALESCE(product_title, '') as product_title,
+        COALESCE(product_sku, '') as product_sku,
+        COALESCE(utm_source, '') as utm_source,
+        COALESCE(utm_campaign, '') as utm_campaign,
+        COALESCE(referrer, '') as referrer,
+        COUNT(*) as events,
+        COUNT(DISTINCT session_id) as sessions,
+        MAX(timestamp) as last_event_at
+       FROM pixel_events
+       WHERE DATE(timestamp) >= ?
+         AND DATE(timestamp) <= ?
+         AND event_name IN ('product_viewed', 'product_added_to_cart')
+         AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '' OR COALESCE(product_sku, '') != '')
+       GROUP BY event_name, product_id, product_title, product_sku, utm_source, utm_campaign, referrer`
+    ).bind(startDate, endDate).all();
+
+    return rows.results || [];
+  } catch (err) {
+    const rows = await env.DB.prepare(
+      `SELECT
+        event_name,
+        COALESCE(product_id, '') as product_id,
+        COALESCE(product_title, '') as product_title,
+        '' as product_sku,
+        COALESCE(utm_source, '') as utm_source,
+        COALESCE(utm_campaign, '') as utm_campaign,
+        COALESCE(referrer, '') as referrer,
+        COUNT(*) as events,
+        COUNT(DISTINCT session_id) as sessions,
+        MAX(timestamp) as last_event_at
+       FROM pixel_events
+       WHERE DATE(timestamp) >= ?
+         AND DATE(timestamp) <= ?
+         AND event_name IN ('product_viewed', 'product_added_to_cart')
+         AND (COALESCE(product_id, '') != '' OR COALESCE(product_title, '') != '')
+       GROUP BY event_name, product_id, product_title, utm_source, utm_campaign, referrer`
+    ).bind(startDate, endDate).all();
+
+    return rows.results || [];
+  }
+}
+
+function buildPixelProductMap(pixelRows) {
+  const map = {};
+
+  (pixelRows || []).forEach((row) => {
+    const key = normalizeProductKey(row.product_sku, row.product_title, row.product_id);
+    const titleKey = normalizeProductKey('', row.product_title, '');
+
+    if (!key) return;
+
+    if (!map[key]) {
+      map[key] = {
+        key,
+        sku: row.product_sku || '',
+        product_id: row.product_id || '',
+        product_title: row.product_title || '',
+        views: 0,
+        add_to_cart: 0,
+        sessions: 0,
+        ai_requests: 0,
+        last_event_at: row.last_event_at || ''
+      };
+    }
+
+    const entry = map[key];
+    const events = safeNumber(row.events);
+    const sessions = safeNumber(row.sessions);
+    const sourceText = [row.utm_source, row.utm_campaign, row.referrer].join(' ');
+    const isAi = hasAgenticText(sourceText);
+
+    if (row.event_name === 'product_viewed') {
+      entry.views += events;
+    }
+
+    if (row.event_name === 'product_added_to_cart') {
+      entry.add_to_cart += events;
+    }
+
+    entry.sessions += sessions;
+
+    if (isAi) {
+      entry.ai_requests += events;
+    }
+
+    if (row.last_event_at && row.last_event_at > entry.last_event_at) {
+      entry.last_event_at = row.last_event_at;
+    }
+
+    if (titleKey && titleKey !== key) {
+      map[titleKey] = entry;
+    }
+  });
+
+  return map;
+}
+
+function findPixelProductInterest(pixelMap, sku, title, productId) {
+  const keys = [
+    normalizeProductKey(sku, title, productId),
+    normalizeProductKey('', title, ''),
+    normalizeProductKey('', '', productId)
+  ].filter(Boolean);
+
+  for (const key of keys) {
+    if (pixelMap[key]) return pixelMap[key];
+  }
+
+  return null;
+}
+
+async function buildProductPerformance(env, rangeWindow, limit = 15) {
+  const orderRows = await env.DB.prepare(
+    `SELECT
+      order_id,
+      order_name,
+      total_price,
+      channel,
+      first_touch_channel,
+      last_touch_channel,
+      line_items,
+      shopify_created_at
+     FROM orders
+     WHERE substr(shopify_created_at, 1, 10) >= ?
+       AND substr(shopify_created_at, 1, 10) <= ?
+     ORDER BY shopify_created_at DESC
+     LIMIT 5000`
+  ).bind(rangeWindow.start, rangeWindow.end).all();
+
+  const pixelRows = await queryPixelProductRows(env, rangeWindow.start, rangeWindow.end);
+  const pixelMap = buildPixelProductMap(pixelRows);
+  const productMap = {};
+  let totalLineItems = 0;
+  let skuLineItems = 0;
+
+  (orderRows.results || []).forEach((order) => {
+    const items = parseLineItems(order.line_items);
+    const channel = getOrderAttributionChannel(order);
+
+    items.forEach((item) => {
+      const sku = String(item.sku || '').trim();
+      const title = String(item.title || '').trim() || 'Unknown Product';
+      const qty = Math.max(1, safeNumber(item.quantity || 1));
+      const price = safeNumber(item.price);
+      const revenue = price > 0 ? price * qty : 0;
+      const key = normalizeProductKey(sku, title, '');
+
+      totalLineItems++;
+      if (sku) skuLineItems++;
+      if (!key) return;
+
+      if (!productMap[key]) {
+        productMap[key] = {
+          key,
+          sku,
+          product_title: title,
+          orders_map: {},
+          orders: 0,
+          units: 0,
+          revenue: 0,
+          channels: {},
+          views: 0,
+          add_to_cart: 0,
+          ai_requests: 0,
+          last_event_at: ''
+        };
+      }
+
+      const product = productMap[key];
+
+      product.orders_map[order.order_id] = true;
+      product.units += qty;
+      product.revenue += revenue;
+      product.channels[channel] = (product.channels[channel] || 0) + revenue;
+
+      if (!product.sku && sku) product.sku = sku;
+      if (!product.product_title && title) product.product_title = title;
+    });
+  });
+
+  Object.values(productMap).forEach((product) => {
+    const interest = findPixelProductInterest(pixelMap, product.sku, product.product_title, '');
+
+    product.orders = Object.keys(product.orders_map).length;
+    delete product.orders_map;
+
+    if (interest) {
+      product.views = interest.views || 0;
+      product.add_to_cart = interest.add_to_cart || 0;
+      product.ai_requests = interest.ai_requests || 0;
+      product.last_event_at = interest.last_event_at || '';
+    }
+
+    const topChannel = Object.entries(product.channels || {})
+      .sort((a, b) => b[1] - a[1])[0];
+
+    product.top_channel = topChannel ? topChannel[0] : 'Direct';
+    product.aov = product.orders > 0 ? product.revenue / product.orders : 0;
+    product.view_to_cart_rate = product.views > 0 ? (product.add_to_cart / product.views) * 100 : null;
+  });
+
+  const products = Object.values(productMap)
+    .sort((a, b) => b.revenue - a.revenue || b.units - a.units)
+    .slice(0, limit);
+
+  const aiInterest = Object.values(pixelMap)
+    .filter((row) => row.ai_requests > 0)
+    .sort((a, b) => b.ai_requests - a.ai_requests || b.views - a.views)
+    .slice(0, limit)
+    .map((row) => ({
+      sku: row.sku || '',
+      product_id: row.product_id || '',
+      product_title: row.product_title || '',
+      views: row.views || 0,
+      add_to_cart: row.add_to_cart || 0,
+      ai_requests: row.ai_requests || 0,
+      last_event_at: row.last_event_at || ''
+    }));
+
+  const totals = products.reduce((acc, row) => {
+    acc.orders += row.orders || 0;
+    acc.units += row.units || 0;
+    acc.revenue += row.revenue || 0;
+    acc.views += row.views || 0;
+    acc.add_to_cart += row.add_to_cart || 0;
+    acc.ai_requests += row.ai_requests || 0;
+    return acc;
+  }, {
+    orders: 0,
+    units: 0,
+    revenue: 0,
+    views: 0,
+    add_to_cart: 0,
+    ai_requests: 0
+  });
+
+  return {
+    range: rangeWindow.range,
+    start: rangeWindow.start,
+    end: rangeWindow.end,
+    totals: {
+      ...totals,
+      product_count: Object.keys(productMap).length,
+      sku_coverage_pct: totalLineItems > 0 ? (skuLineItems / totalLineItems) * 100 : 0,
+      pixel_product_rows: pixelRows.length
+    },
+    products,
+    ai_interest: aiInterest
+  };
+}
+
+async function handleProductPerformance(request, env, cors) {
+  const url = new URL(request.url);
+  const rangeWindow = getRangeWindow(url);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '15', 10), 50);
+  const result = await buildProductPerformance(env, rangeWindow, limit);
+
+  return json(result, 200, cors);
+}
 
 async function handleChannels(request, env, cors) {
   const url = new URL(request.url);
@@ -3569,6 +4363,33 @@ async function handleFeishuSync(request, env, cors) {
       agenticError = err && err.message ? err.message : String(err);
     }
 
+    let syncHealth = null;
+    let syncHealthError = null;
+
+    try {
+      syncHealth = await buildSyncHealth(env, rangeWindow);
+    } catch (err) {
+      syncHealthError = err && err.message ? err.message : String(err);
+    }
+
+    let attributionAnomalies = null;
+    let attributionAnomaliesError = null;
+
+    try {
+      attributionAnomalies = await buildAttributionAnomalies(env, rangeWindow, 8);
+    } catch (err) {
+      attributionAnomaliesError = err && err.message ? err.message : String(err);
+    }
+
+    let productPerformance = null;
+    let productPerformanceError = null;
+
+    try {
+      productPerformance = await buildProductPerformance(env, rangeWindow, 8);
+    } catch (err) {
+      productPerformanceError = err && err.message ? err.message : String(err);
+    }
+
     const reasonMap = {};
 
     (ai.rising_channels || []).forEach((row) => {
@@ -3672,6 +4493,58 @@ async function handleFeishuSync(request, env, cors) {
           `**Catalog / SKU 访问**\n${catalogText}`
         ].join('\n\n')
       : `Shopify 智能体总结生成失败：${feishuEsc(agenticError || 'unknown_error')}`;
+
+    const syncHealthText = syncHealth
+      ? [
+          `状态：**${feishuEsc(syncHealth.status || 'ok')}**`,
+          `最新订单：${feishuEsc(syncHealth.latest_order_date || '-')} / 最新 Pixel：${feishuEsc(syncHealth.latest_pixel_date || '-')}`,
+          `Pending Attribution：**${syncHealth.pending_attribution_count || 0}**`,
+          `Other + No Conversion Details：**${syncHealth.attribution_anomalies?.orders || 0} 单 / ${feishuMoney(syncHealth.attribution_anomalies?.revenue || 0)}**`,
+          `Pixel SKU 字段：${syncHealth.product_sku_enabled ? '已启用' : '未启用或待迁移'}`,
+          (syncHealth.checks || []).slice(0, 5).map((row, index) => {
+            return `${index + 1}. [${feishuEsc(row.severity || 'info')}] ${feishuEsc(row.title || '-')}：${feishuEsc(row.detail || '-')}`;
+          }).join('\n')
+        ].filter(Boolean).join('\n')
+      : `数据同步健康生成失败：${feishuEsc(syncHealthError || 'unknown_error')}`;
+
+    const anomalyText = attributionAnomalies
+      ? (
+          (attributionAnomalies.orders || []).length
+            ? (attributionAnomalies.orders || []).slice(0, 8).map((row, index) => {
+                const source = row.utm_source || row.referring_site || row.source_name || row.landing_site || '-';
+                return [
+                  `${index + 1}. **${feishuEsc(row.order_name || row.order_id)}** / ${feishuEsc(row.bucket_label || '-')}`,
+                  feishuMoney(row.total_price || 0),
+                  `effective=${feishuEsc(row.effective_channel || '-')}`,
+                  `source=${feishuEsc(String(source).slice(0, 80))}`,
+                  `问题=${feishuEsc(row.diagnosis?.title || '-')}`,
+                  `修复=${feishuEsc((row.diagnosis?.fixes || [])[0] || '-')}`
+                ].join(' / ');
+              }).join('\n')
+            : '暂无 Other / No Conversion Details 异常订单'
+        )
+      : `归因异常明细生成失败：${feishuEsc(attributionAnomaliesError || 'unknown_error')}`;
+
+    const productText = productPerformance
+      ? (
+          (productPerformance.products || []).length
+            ? [
+                `SKU 覆盖率：**${feishuPct(productPerformance.totals?.sku_coverage_pct || 0)}** / 商品数：**${productPerformance.totals?.product_count || 0}**`,
+                (productPerformance.products || []).slice(0, 8).map((row, index) => {
+                  const product = row.sku || row.product_title || '-';
+                  return `${index + 1}. **${feishuEsc(product)}** / ${row.orders || 0} 单 / ${row.units || 0} 件 / ${feishuMoney(row.revenue || 0)} / Top 渠道 ${feishuEsc(row.top_channel || '-')}`;
+                }).join('\n')
+              ].join('\n')
+            : '暂无商品 / SKU 销售数据'
+        )
+      : `商品 / SKU 分析生成失败：${feishuEsc(productPerformanceError || 'unknown_error')}`;
+
+    const aiInterestText = productPerformance && (productPerformance.ai_interest || []).length
+      ? (productPerformance.ai_interest || []).slice(0, 5).map((row, index) => {
+          const product = row.sku || row.product_title || row.product_id || '-';
+          return `${index + 1}. ${feishuEsc(product)} / AI 访问 ${row.ai_requests || 0} 次 / 浏览 ${row.views || 0} / 加购 ${row.add_to_cart || 0}`;
+        }).join('\n')
+      : '暂无 AI 商品兴趣数据';
 
     const alerts = [];
 
@@ -3820,6 +4693,30 @@ async function handleFeishuSync(request, env, cors) {
             text: {
               tag: 'lark_md',
               content: `**Shopify 智能体渠道总结**\n${agenticText}`
+            }
+          },
+          {
+            tag: 'hr'
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**数据同步健康**\n${syncHealthText}`
+            }
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**归因异常订单 Top**\n${anomalyText}`
+            }
+          },
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `**商品 / SKU 经营分析**\n${productText}\n\n**AI 商品兴趣**\n${aiInterestText}`
             }
           },
           {

@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS pixel_events (
   utm_term TEXT DEFAULT '',
   product_id TEXT,
   product_title TEXT,
+  product_sku TEXT DEFAULT '',
   product_price REAL,
   variant_id TEXT,
   quantity INTEGER,
@@ -76,6 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_pixel_timestamp ON pixel_events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_pixel_event ON pixel_events(event_name);
 CREATE INDEX IF NOT EXISTS idx_pixel_session ON pixel_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_pixel_campaign ON pixel_events(utm_campaign);
+CREATE INDEX IF NOT EXISTS idx_pixel_product_sku ON pixel_events(product_sku);
 
 -- Manual or imported ad spend by date and channel.
 CREATE TABLE IF NOT EXISTS ad_spend (

@@ -56,6 +56,9 @@ var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 - `GET /api/funnel?range=today|7d|30d`
 - `GET /api/ai-analysis?range=today|7d|30d`
 - `GET /api/agentic-summary?range=today|7d|30d`
+- `GET /api/sync-health?range=today|7d|30d`
+- `GET /api/attribution-anomalies?range=today|7d|30d`
+- `GET /api/product-performance?range=today|7d|30d`
 
 ## Cloudflare Worker
 
@@ -79,6 +82,9 @@ main = "src/worker.js"
 - `POST /api/meta/sync`
 - `GET /api/meta/insights`
 - `GET /api/agentic-summary`
+- `GET /api/sync-health`
+- `GET /api/attribution-anomalies`
+- `GET /api/product-performance`
 - `POST /api/feishu-sync`
 - `GET /api/order-journey?order_id=...`
 
@@ -107,6 +113,7 @@ main = "src/worker.js"
 wrangler d1 execute thermal-master-db --file=schema.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-meta-ad-insights.sql
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-agent-catalog-logs.sql
+wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-pixel-product-sku.sql
 wrangler deploy
 ```
 
@@ -129,6 +136,13 @@ curl "https://thermal-master-api.thermalmaster.workers.dev/api/meta/insights?dat
 curl "https://thermal-master-api.thermalmaster.workers.dev/api/agentic-summary?range=today&date=YYYY-MM-DD"
 ```
 
+查看同步健康、异常归因和商品/SKU 分析：
+```bash
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/sync-health?range=7d&date=YYYY-MM-DD"
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/attribution-anomalies?range=7d&date=YYYY-MM-DD"
+curl "https://thermal-master-api.thermalmaster.workers.dev/api/product-performance?range=7d&date=YYYY-MM-DD"
+```
+
 ## Shopify 智能体渠道总结
 
 看板新增了 `Shopify 智能体渠道总结` 板块，对齐 Shopify Admin 可直接查看的 5 个入口：
@@ -142,6 +156,8 @@ curl "https://thermal-master-api.thermalmaster.workers.dev/api/agentic-summary?r
 当前后端接口是 `GET /api/agentic-summary`。它会先用 D1 现有的订单归因、UTM、referrer、pixel session 识别 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot、Agentic 等来源；如果 Shopify Admin 已有 Agentic channel，但 D1 还没同步到相应字段，板块会显示空数据并提示检查 UTM、referrer 或 customerJourney。
 
 `Catalog -> API logs` 依赖新增的 `agent_catalog_logs` 表，表结构已加入 `schema.sql` 和迁移文件；后续如果要精确看到 “哪个 AI Agent 抓了哪个 SKU”，还需要把商品/catalog API 访问日志写入这张表。
+
+补充：当前 Catalog fallback 会使用 Pixel 商品浏览/加购事件展示 AI 商品兴趣；`pixel_events.product_sku` 已新增，更新 Shopify Custom Pixel 后，新商品事件会带 SKU。
 
 语法检查：
 

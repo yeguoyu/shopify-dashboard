@@ -441,6 +441,53 @@ body {
 .delta-up { color: var(--accent); font-weight: 700; }
 .delta-down { color: var(--red); font-weight: 700; }
 .delta-flat { color: var(--text-secondary); }
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.health-card {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 12px;
+}
+.health-label {
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 4px;
+}
+.health-value {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 700;
+}
+.health-status.ok { color: var(--accent); }
+.health-status.watch { color: var(--orange); }
+.health-status.action_required { color: var(--red); }
+.health-check {
+  border-left: 3px solid var(--border);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+}
+.health-check.high { border-left-color: var(--red); }
+.health-check.medium { border-left-color: var(--orange); }
+.health-check.info { border-left-color: var(--accent); }
+.health-check strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.health-check span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
 
 @media (max-width: 768px) {
   .analysis-grid { grid-template-columns: 1fr; }
@@ -712,6 +759,112 @@ body {
             </thead>
             <tbody id="agenticCatalogBody">
               <tr><td colspan="4" style="text-align:center;opacity:0.5">加载中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       Data Sync Health
+       ============================================ -->
+  <div class="section" id="syncHealthSection">
+    <div class="section-header">
+      <div class="section-title">数据同步健康</div>
+      <div class="section-note">Orders · Pixel · Attribution</div>
+    </div>
+    <div class="panel">
+      <div class="health-grid">
+        <div class="health-card">
+          <div class="health-label">状态</div>
+          <div class="health-value health-status ok" id="syncHealthStatus">加载中</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">最新订单</div>
+          <div class="health-value" id="syncLatestOrder">-</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">最新 Pixel</div>
+          <div class="health-value" id="syncLatestPixel">-</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">Pending Attribution</div>
+          <div class="health-value" id="syncPendingAttribution">0</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">异常归因订单</div>
+          <div class="health-value" id="syncAnomalyOrders">0</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">异常归因金额</div>
+          <div class="health-value" id="syncAnomalyRevenue">$0</div>
+        </div>
+        <div class="health-card">
+          <div class="health-label">Pixel SKU</div>
+          <div class="health-value" id="syncSkuEnabled">-</div>
+        </div>
+      </div>
+      <div id="syncHealthChecks">
+        <div class="analysis-empty">正在加载数据同步检查...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       Attribution Anomaly Orders
+       ============================================ -->
+  <div class="section" id="attributionAnomalySection">
+    <div class="section-header">
+      <div class="section-title">归因异常订单明细</div>
+      <div class="section-note">
+        Other <span id="anomalyOtherCount">0</span> · No Conversion Details <span id="anomalyNoConversionCount">0</span> · 合计 <span id="anomalyTotalOrders">0</span> / <span id="anomalyTotalRevenue">$0</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>订单</th><th>异常类型</th><th>金额</th><th>有效渠道</th><th>来源信号</th><th>问题判断</th><th>修复排查</th></tr>
+          </thead>
+          <tbody id="attributionAnomalyBody">
+            <tr><td colspan="7" style="text-align:center;opacity:0.5">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       Product / SKU Performance
+       ============================================ -->
+  <div class="section" id="productPerformanceSection">
+    <div class="section-header">
+      <div class="section-title">商品 / SKU 经营分析</div>
+      <div class="section-note">
+        商品 <span id="productCount">0</span> · 销售 <span id="productRevenue">$0</span> · 件数 <span id="productUnits">0</span> · SKU 覆盖 <span id="productSkuCoverage">0%</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>SKU</th><th>商品</th><th>订单</th><th>件数</th><th>销售额</th><th>Top 渠道</th><th>浏览</th><th>加购</th><th>AI 访问</th></tr>
+          </thead>
+          <tbody id="productPerformanceBody">
+            <tr><td colspan="9" style="text-align:center;opacity:0.5">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="analysis-title">AI 商品兴趣</div>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr><th>SKU / Product</th><th>商品</th><th>AI 访问</th><th>浏览</th><th>加购</th></tr>
+            </thead>
+            <tbody id="aiProductInterestBody">
+              <tr><td colspan="5" style="text-align:center;opacity:0.5">加载中...</td></tr>
             </tbody>
           </table>
         </div>

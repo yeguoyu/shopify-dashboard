@@ -371,6 +371,7 @@ curl "https://thermal-master-api.你的子域名.workers.dev/api/meta/insights?d
 
 ```bash
 wrangler d1 execute thermal-master-db --file=migrations/2026-05-29-agent-catalog-logs.sql
+wrangler d1 execute thermal-master-db --file=migrations/2026-05-30-pixel-product-sku.sql
 ```
 
 ### B. 部署 Worker
@@ -383,6 +384,9 @@ wrangler deploy
 
 ```bash
 curl "https://thermal-master-api.你的子域名.workers.dev/api/agentic-summary?range=today&date=2026-05-28"
+curl "https://thermal-master-api.你的子域名.workers.dev/api/sync-health?range=7d&date=2026-05-29"
+curl "https://thermal-master-api.你的子域名.workers.dev/api/attribution-anomalies?range=7d&date=2026-05-29"
+curl "https://thermal-master-api.你的子域名.workers.dev/api/product-performance?range=7d&date=2026-05-29"
 ```
 
 接口会返回 `report_locations`、`summary`、`kpi`、`platforms`、`orders`、`acquired_customers` 和 `catalog_logs`。如果当前没有识别到 ChatGPT/OpenAI、Perplexity、Gemini、Claude、Copilot 或 Agentic 来源，`orders` 为空属于正常结果，说明 Shopify 的 Agentic 来源还没有进入 D1 订单归因或 pixel 数据。
@@ -390,6 +394,8 @@ curl "https://thermal-master-api.你的子域名.workers.dev/api/agentic-summary
 ### D. 后续接入 Catalog API logs
 
 `Catalog -> API logs` 目前有表结构和看板展示位，但还需要在后续商品/catalog API 访问入口中把 `agent_name`、`sku`、`product_id`、`product_title`、`request_path` 等字段写入 `agent_catalog_logs`，才能精确统计 “哪个 AI Agent 抓了哪个 SKU”。
+
+当前看板会用 Pixel 商品浏览/加购事件作为 Catalog fallback；执行 `2026-05-30-pixel-product-sku.sql` 并更新 Shopify Custom Pixel 后，新商品事件会写入 `product_sku`，商品/SKU 分析和飞书日报会同步展示。
 
 ---
 
@@ -419,6 +425,7 @@ var API_BASE = 'https://thermal-master-api.thermalmaster.workers.dev';
 | Webhook 接收 | 创建订单后 D1 有 orders 记录 |
 | Meta 同步 | 调用 /api/meta/sync 后 D1 有 meta_ad_insights 记录，ad_spend 有 Facebook 花费 |
 | Shopify 智能体总结 | 调用 /api/agentic-summary 返回 kpi、报表入口映射和空/非空 AI 渠道清单 |
+| 同步健康 / 异常归因 / 商品SKU | 调用 /api/sync-health、/api/attribution-anomalies、/api/product-performance 返回明细 |
 | 飞书推送 | 调用 /api/feishu-sync 群里收到消息 |
 | 定时触发 | Cloudflare Dashboard → Workers → Triggers 显示 Cron |
 
