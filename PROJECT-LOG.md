@@ -251,3 +251,26 @@
 
 未解决事项：
 - 需要重新写入有效的 `SHOPIFY_ADMIN_TOKEN`，当前线上 GraphQL 返回 401，订单侧归因无法真正回填。
+
+### 执行 Shopify customerJourney 订单归因回填
+
+修改文件：
+- `PROJECT-LOG.md`
+
+原因：
+- 用户重新写入有效的 `SHOPIFY_ADMIN_TOKEN` 后，线上 `/api/order-journey?order_id=7371027841308` 已从 Shopify GraphQL 正常返回 `status: 200`、`ok: true`，可以开始把订单侧 `customerJourneySummary` 写入 D1。
+
+内容：
+- 调用线上 `POST /api/backfill-attribution` 多轮回填历史订单归因。
+- 共处理 169 单：第一轮 50 单，后续三轮分别 50、50、19 单。
+- 回填完成后，D1 中 `first_touch_channel` 或 `last_touch_channel` 仍为 `Pending Attribution` 的订单数为 0。
+- 最近订单渠道已从 Pending 更新为 Google Ads、Google Organic、Facebook、YouTube、Email、Bing、Referral、Other、No Conversion Details 等真实渠道。
+- `No Conversion Details` 代表 Shopify GraphQL 返回 `customerJourneySummary.ready = true` 但 `moments_count = 0`，即 Shopify 本身没有给该订单转化路径。
+
+验证：
+- 线上 D1 查询 Pending 订单数：`pending_count = 0`。
+- 线上 `/api/agentic-summary?range=7d` 已识别 AI 智能体订单：3 单，销售额 `$807.03`，AOV `$269.01`，会话 176，AI 首单获客 3。
+- AI 平台明细：ChatGPT 2 单 / `$556.86`，Gemini 1 单 / `$250.17`；Perplexity、Claude、Copilot 当前只有会话没有订单。
+
+未解决事项：
+- `Catalog -> API logs` 仍没有写入来源，`catalog_logs` 为空；后续需要接入商品/catalog API 访问日志。
