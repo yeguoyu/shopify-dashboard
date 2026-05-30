@@ -364,4 +364,5 @@
 - 线上 `/api/sync-health?range=7d&date=2026-05-29` 返回 `status=watch`、`pending_attribution_count=0`、`product_sku_enabled=true`、异常归因 `56` 单 / `$23046.93`。
 - 线上 `/api/attribution-anomalies?range=7d&date=2026-05-29&limit=3` 返回 Top 异常订单：`#22315` 已识别为 `入口信号缺失 / high`；`#22269` 已识别为 `Shopify 无 journey，但订单 URL 有 UTM`；`#22221` 已识别为 `Last touch 已识别，但主渠道仍是 Other`。
 - 线上 `/api/product-performance?range=7d&date=2026-05-29&limit=3` 返回 Top SKU：`1A00200181`、`1A00800007`、`1A00800022`，并包含订单数、件数、销售额、Top 渠道、浏览、加购和 AI 访问。
+- 已推送 GitHub `main`；GitHub Pages 的 `app.js` 已确认包含 `/api/sync-health`、`/api/attribution-anomalies`、`/api/product-performance`，`index.html` 已确认包含 `syncHealthSection`、`attributionAnomalySection`、`productPerformanceSection`。
 - 本地没有可用 Playwright/Browser 自动化运行时，因此未做浏览器截图验证；前端已通过 `node --check app.js`，线上 API 已确认可返回真实数据。
