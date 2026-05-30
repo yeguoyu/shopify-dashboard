@@ -133,6 +133,16 @@ export default {
       shopify_now: shopifyNow
     }));
 
+    ctx.waitUntil(
+      backfillPendingAttribution(env, 25)
+        .then((result) => {
+          console.log('[CRON] attribution maintenance finished', JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error('[CRON] attribution maintenance failed', err.message);
+        })
+    );
+
     if (reportNow.hour !== reportHour) {
       console.log('[CRON] skipped, current report hour is', reportNow.hour);
       return;
@@ -549,6 +559,19 @@ async function buildSyncHealth(env, rangeWindow) {
   const pending = await env.DB.prepare(
     `SELECT COUNT(*) as cnt
      FROM orders
+     WHERE substr(shopify_created_at, 1, 10) >= ?
+       AND substr(shopify_created_at, 1, 10) <= ?
+       AND (
+         first_touch_channel IS NULL
+         OR last_touch_channel IS NULL
+         OR first_touch_channel = 'Pending Attribution'
+         OR last_touch_channel = 'Pending Attribution'
+       )`
+  ).bind(rangeWindow.start, rangeWindow.end).first();
+
+  const pendingTotal = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt
+     FROM orders
      WHERE first_touch_channel IS NULL
         OR last_touch_channel IS NULL
         OR first_touch_channel = 'Pending Attribution'
@@ -667,6 +690,7 @@ async function buildSyncHealth(env, rangeWindow) {
     order_lag_days: orderLagDays,
     pixel_lag_days: pixelLagDays,
     pending_attribution_count: pending?.cnt || 0,
+    pending_attribution_total_count: pendingTotal?.cnt || 0,
     attribution_anomalies: anomalies.totals,
     attribution_anomaly_status: anomalies.status_summary,
     attribution_anomaly_revenue_share: anomalyRevenueShare,
@@ -2268,9 +2292,10 @@ async function upsertShopifyOrder(order, env) {
 // Backfill Attribution — 给已有订单补归因
 // ============================================
 
-async function handleBackfillAttribution(env, cors) {
+async function backfillPendingAttribution(env, limit = 50) {
   const shopDomain = env.SHOPIFY_STORE;
   const token = env.SHOPIFY_ADMIN_TOKEN;
+  const safeLimit = Math.min(Math.max(Number(limit || 50), 1), 50);
 
   const orders = await env.DB.prepare(
     `SELECT
@@ -2283,8 +2308,8 @@ async function handleBackfillAttribution(env, cors) {
         OR first_touch_channel = 'Pending Attribution'
         OR last_touch_channel = 'Pending Attribution'
      ORDER BY id DESC
-     LIMIT 50`
-  ).all();
+     LIMIT ?`
+  ).bind(safeLimit).all();
 
   const results = [];
 
@@ -2314,11 +2339,17 @@ async function handleBackfillAttribution(env, cors) {
     }
   }
 
-  return json({
+  return {
     processed: results.length,
     shopify_configured: Boolean(shopDomain && token),
     results
-  }, 200, cors);
+  };
+}
+
+async function handleBackfillAttribution(env, cors) {
+  const result = await backfillPendingAttribution(env, 50);
+
+  return json(result, 200, cors);
 }
 // ============================================
 // Dashboard — 增加 ROI + 退货率

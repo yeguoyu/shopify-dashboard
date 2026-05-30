@@ -296,7 +296,7 @@ curl -X POST https://thermal-master-api.你的子域名.workers.dev/api/feishu-s
 crons = ["5 * * * *"]
 ```
 
-Cloudflare Cron 使用 UTC。当前配置是每小时第 5 分钟触发一次，Worker 内部会按 `FEISHU_REPORT_TIMEZONE` 和 `FEISHU_REPORT_HOUR` 判断，只在北京时间 09:05 左右同步昨天订单并推送日报。
+Cloudflare Cron 使用 UTC。当前配置是每小时第 5 分钟触发一次。非日报时段会轻量回填一批 Pending Attribution；Worker 内部会按 `FEISHU_REPORT_TIMEZONE` 和 `FEISHU_REPORT_HOUR` 判断，只在北京时间 09:05 左右同步昨天订单并推送日报。
 部署后自动生效，不需要额外操作。
 
 ---

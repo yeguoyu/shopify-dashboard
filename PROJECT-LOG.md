@@ -403,3 +403,36 @@
 未解决事项：
 - `POST /api/attribution-rules/apply` 和 `POST /api/product-catalog/backfill` 需要 `API_WRITE_TOKEN`；如果没有 token，只能先验证只读接口，不能手动触发批量回填。
 - 当前本机 Wrangler 远端 access token 已失效，需要重新 `wrangler login` 或更新 Cloudflare API token。
+
+### 部署归因闭环并补齐 Pending Attribution 维护
+
+修改文件：
+- `src/worker.js`
+- `DEPLOYMENT-GUIDE.md`
+- `PROJECT-LOG.md`
+
+原因：
+- Cloudflare 登录恢复后，需要把归因闭环迁移和 Worker 正式部署到线上。
+- 线上验证发现 `sync-health` 的 Pending Attribution 用全库口径，会把 2026-05-30 的新订单计入 2026-05-29 的 7d 报表，造成过度报警。
+- 新订单白天进入 D1 后，如果等到第二天飞书日报才回填 customerJourney，Pending 会在当天持续堆积。
+
+内容：
+- 远端执行 `migrations/2026-05-30-attribution-closure.sql`，创建并初始化归因规则、订单 override、商品目录表。
+- 部署 Worker 版本 `a5060911-7e86-421d-a1b5-0f2fa78eaa6b`，归因闭环接口上线。
+- 直接用 D1 从历史 `orders.line_items` 回填 `product_catalog`，237 条 line item 合并为 33 个唯一商品键。
+- `sync-health` 的 `pending_attribution_count` 改为当前查询区间口径，并新增 `pending_attribution_total_count` 保存全库 pending 总数。
+- Cron 增加每小时轻量维护：每次触发先自动回填最多 25 单 Pending Attribution；日报时段仍继续执行订单同步、归因回填和飞书推送。
+- 部署 Worker 版本 `745c0f87-adb2-42c2-a2d4-607829adcc61`，使 pending 口径修正和每小时自动回填维护生效。
+
+验证：
+- 远端 D1 migration 成功：12 条 SQL，58 行写入。
+- `/api/attribution-rules` 返回 10 条 ACTIVE 默认规则。
+- `/api/attribution-anomalies?range=7d&date=2026-05-29&limit=3` 返回 56 单 / `$23046.93`，open 56，rules_count 10。
+- `/api/order-diagnostics?order_id=7364960289052` 返回 #22315 的原始归因、有效归因、问题诊断、line_items 和相关 Pixel 事件。
+- `/api/product-performance?range=7d&date=2026-05-29&limit=3` 返回 19 个商品、SKU 覆盖率 100%、AI requests 84，Top SKU 包含 `1A00200181`、`1A00800007`、`1A00800022`。
+- `/api/agentic-summary?range=7d&date=2026-05-29` 返回 AI 订单 3 单 / `$807.03` / sessions 176 / Catalog fallback 61。
+- 后续本机对 Worker 域名出现 TCP 443 连接失败，但此前只读接口已完成验证；D1 和 Wrangler deploy 通道正常。
+
+未解决事项：
+- 仍有 56 单 Other / No Conversion Details 处于 open，需要用订单诊断逐步确认来源，或先通过 `POST /api/attribution-rules/apply` dry run 查看可批量回填样本。
+- Worker 域名在本机 DNS 解析到 `69.171.229.73` 后 TCP 443 连接失败，疑似本地网络/解析问题；线上部署已成功，但本机后续 HTTP 复核受阻。
