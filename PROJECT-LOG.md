@@ -431,6 +431,8 @@
 - `/api/order-diagnostics?order_id=7364960289052` 返回 #22315 的原始归因、有效归因、问题诊断、line_items 和相关 Pixel 事件。
 - `/api/product-performance?range=7d&date=2026-05-29&limit=3` 返回 19 个商品、SKU 覆盖率 100%、AI requests 84，Top SKU 包含 `1A00200181`、`1A00800007`、`1A00800022`。
 - `/api/agentic-summary?range=7d&date=2026-05-29` 返回 AI 订单 3 单 / `$807.03` / sessions 176 / Catalog fallback 61。
+- 远端 D1 复核 `product_catalog` 已有 33 个唯一商品键。
+- 远端 D1 复核全库 Pending Attribution 已降至 1 单，说明新增的回填维护/现有回填链路已经开始清理新单 pending。
 - 后续本机对 Worker 域名出现 TCP 443 连接失败，但此前只读接口已完成验证；D1 和 Wrangler deploy 通道正常。
 
 未解决事项：
