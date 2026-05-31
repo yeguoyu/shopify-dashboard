@@ -438,3 +438,31 @@
 未解决事项：
 - 仍有 56 单 Other / No Conversion Details 处于 open，需要用订单诊断逐步确认来源，或先通过 `POST /api/attribution-rules/apply` dry run 查看可批量回填样本。
 - Worker 域名在本机 DNS 解析到 `69.171.229.73` 后 TCP 443 连接失败，疑似本地网络/解析问题；线上部署已成功，但本机后续 HTTP 复核受阻。
+
+### 修正飞书日报与看板金额不一致
+
+修改文件：
+- `src/worker.js`
+- `wrangler.toml`
+- `README.md`
+- `DEPLOYMENT-GUIDE.md`
+- `PROJECT-LOG.md`
+
+原因：
+- 2026-05-30 看板显示 `$14718.87 / 27 单`，飞书日报显示 `$13008.07 / 23 单`。
+- 复核 D1 后确认，飞书是在北京时间 09:06 推送；此时 Shopify 店铺时区 America/Los_Angeles 仍是 2026-05-30 18:06，当天还没结束。
+- 洛杉矶 18:06 后又新增 4 单：#22385 `$499.00`、#22386 `$313.80`、#22387 `$299.00`、#22388 `$599.00`，合计 `$1710.80`；`$13008.07 + $1710.80 = $14718.87`。
+
+内容：
+- `FEISHU_REPORT_TIMEZONE` 从 `Asia/Shanghai` 改为 `America/Los_Angeles`。
+- `FEISHU_REPORT_HOUR` 从 `9` 改为 `1`。
+- Worker 默认飞书日报时区/小时同步改为 Shopify 店铺时区凌晨 1 点，确保推送的是完整的 Shopify 昨日数据。
+- README 和部署指南同步改口径说明。
+- 部署 Worker 版本 `db32467f-f636-4bc6-8bfb-16da837697b5`，远端变量已显示 `FEISHU_REPORT_TIMEZONE=America/Los_Angeles`、`FEISHU_REPORT_HOUR=1`。
+
+验证：
+- D1 查询 `2026-05-30T18:06:00-07:00` 前订单：23 单 / `$13008.07`，与飞书一致。
+- D1 查询完整 2026-05-30：27 单 / `$14718.87`，与看板一致。
+
+未解决事项：
+- 新配置下飞书日报会在 Shopify 店铺时区凌晨 1 点后推送；换算到北京时间约为下午 16:05（夏令时）或 17:05（冬令时）。

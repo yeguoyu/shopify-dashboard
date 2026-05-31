@@ -15,8 +15,8 @@ database_id = "d7a847f7-3c97-4752-9d4e-adea1b625708"   # ← 创建 D1 后替换
 # ---- Environment Variables ----
 [vars]
 DASHBOARD_URL = "https://yeguoyu.github.io/shopify-dashboard/"
-FEISHU_REPORT_TIMEZONE = "Asia/Shanghai"
-FEISHU_REPORT_HOUR = "9"
+FEISHU_REPORT_TIMEZONE = "America/Los_Angeles"
+FEISHU_REPORT_HOUR = "1"
 FEISHU_REPORT_DATE_OFFSET_DAYS = "1"
 META_API_VERSION = "v25.0"
 META_ATTRIBUTION_WINDOWS = "[\"1d_click\",\"7d_click\",\"1d_view\"]"

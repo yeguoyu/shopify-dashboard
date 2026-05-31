@@ -77,8 +77,8 @@ database_id = "xxxx-xxxx-xxxx-xxxx"  ← 替换这里
 ```toml
 [vars]
 DASHBOARD_URL = "https://你的用户名.github.io/shopify-dashboard/"
-FEISHU_REPORT_TIMEZONE = "Asia/Shanghai"
-FEISHU_REPORT_HOUR = "9"
+FEISHU_REPORT_TIMEZONE = "America/Los_Angeles"
+FEISHU_REPORT_HOUR = "1"
 FEISHU_REPORT_DATE_OFFSET_DAYS = "1"
 META_API_VERSION = "v25.0"
 META_ATTRIBUTION_WINDOWS = "[\"1d_click\",\"7d_click\",\"1d_view\"]"
@@ -296,7 +296,7 @@ curl -X POST https://thermal-master-api.你的子域名.workers.dev/api/feishu-s
 crons = ["5 * * * *"]
 ```
 
-Cloudflare Cron 使用 UTC。当前配置是每小时第 5 分钟触发一次。非日报时段会轻量回填一批 Pending Attribution；Worker 内部会按 `FEISHU_REPORT_TIMEZONE` 和 `FEISHU_REPORT_HOUR` 判断，只在北京时间 09:05 左右同步昨天订单并推送日报。
+Cloudflare Cron 使用 UTC。当前配置是每小时第 5 分钟触发一次。非日报时段会轻量回填一批 Pending Attribution；Worker 内部会按 `FEISHU_REPORT_TIMEZONE` 和 `FEISHU_REPORT_HOUR` 判断，当前在 Shopify 店铺时区凌晨 1 点后同步昨天订单并推送日报，避免当天未结束时提前推送。
 部署后自动生效，不需要额外操作。
 
 ---

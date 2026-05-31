@@ -186,8 +186,8 @@ function hasWriteAccess(request, env) {
 // ============================================
 
 const SHOPIFY_TIMEZONE = 'America/Los_Angeles';
-const DEFAULT_FEISHU_REPORT_TIMEZONE = 'Asia/Shanghai';
-const DEFAULT_FEISHU_REPORT_HOUR = 9;
+const DEFAULT_FEISHU_REPORT_TIMEZONE = SHOPIFY_TIMEZONE;
+const DEFAULT_FEISHU_REPORT_HOUR = 1;
 const DEFAULT_FEISHU_REPORT_DATE_OFFSET_DAYS = 1;
 const DEFAULT_META_API_VERSION = 'v25.0';
 const DEFAULT_META_ATTRIBUTION_WINDOWS = ['1d_click', '7d_click', '1d_view'];

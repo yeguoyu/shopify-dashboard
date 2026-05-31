@@ -104,8 +104,8 @@ main = "src/worker.js"
 - `SHOPIFY_ADMIN_TOKEN`: Shopify Admin API token
 - `SHOPIFY_WEBHOOK_SECRET`: Shopify Webhook signing secret
 - `FEISHU_WEBHOOK`: 飞书机器人 webhook
-- `FEISHU_REPORT_TIMEZONE`: 飞书日报推送时区，当前为 `Asia/Shanghai`
-- `FEISHU_REPORT_HOUR`: 飞书日报推送小时，当前为 `9`
+- `FEISHU_REPORT_TIMEZONE`: 飞书日报推送时区，当前为 `America/Los_Angeles`，跟 Shopify 店铺日期对齐
+- `FEISHU_REPORT_HOUR`: 飞书日报推送小时，当前为 `1`，表示 Shopify 店铺时区凌晨 1 点后推送完整昨天数据
 - `FEISHU_REPORT_DATE_OFFSET_DAYS`: 推送哪一天的数据，当前为 `1`，表示推送昨天
 - `META_ACCESS_TOKEN`: Meta Marketing API access token
 - `META_AD_ACCOUNT_ID`: Meta 广告账户 ID，可以填 `act_xxx` 或纯数字
@@ -205,7 +205,7 @@ node --check src/worker.js
 ## 当前注意事项
 
 - `schema.sql` 已按当前 Worker 代码补齐 `orders` 归因字段、`ad_spend` 和 `refunds` 表。已有线上 D1 如果是旧结构，需要单独做迁移，不能只依赖 `CREATE TABLE IF NOT EXISTS` 自动补列。
-- 自动飞书日报使用 `FEISHU_REPORT_TIMEZONE` 判断推送时间，和 Shopify 数据时区 `SHOPIFY_TIMEZONE` 分开，避免北京时间 09:05 被洛杉矶时区判断跳过。
+- 自动飞书日报使用 `FEISHU_REPORT_TIMEZONE` 判断推送时间；当前与 Shopify 数据时区 `SHOPIFY_TIMEZONE` 对齐，避免北京时间上午推送时 Shopify 当天还没结束导致销售额少算。
 - Meta 第一阶段接入会把 Meta Insights 写入 `meta_ad_insights`，并把每日 Facebook 花费回写到 `ad_spend`，让现有渠道 ROAS 和飞书日报直接使用 Meta 花费。
 - Shopify 智能体渠道总结已接入 `GET /api/agentic-summary`，前端会展示 AI 渠道销售额、订单、会话、AOV、首单获客和 Catalog API logs；真实 AI 订单数据取决于 Shopify/Pixel 是否已经把 Agentic 来源同步进 D1。
 - `src/worker - 副本.js` 是本地备份文件，先不作为正式源码提交。
